@@ -1,0 +1,35 @@
+{
+  "volume": {
+    "file": "bangalore_volume.csv",
+    "sha256": "2d7636e53b641a0427eb2d675f9b7747de7f68661c5c97d9dc8ee8e0b42e3d77",
+    "source": "User-supplied Bangalore City Traffic Dataset",
+    "provenance": "Measurement origin and licence unverified; kept local."
+  },
+  "journey": {
+    "repository": "https://github.com/thecont1/traffic-monitor-lizard",
+    "revision": "fd4b32fb4c7507437fb7f5711d64b986e78bb2bb",
+    "downloaded_at_utc": "2026-10-31T13:10:16.745475+00:00",
+    "licence": "CC BY 4.0",
+    "attribution": "Traffic Monitor Lizard by Mahesh Shantaram / thecont1",
+    "files": [
+      {
+        "file": "csv-traffic-bangalore.csv",
+        "url": "https://raw.githubusercontent.com/thecont1/traffic-monitor-lizard/fd4b32fb4c7507437fb7f5711d64b986e78bb2bb/data/csv-traffic-bangalore.csv",
+        "bytes": 5605572,
+        "sha256": "fbdd86ff2e1294b9bcb6b6f20bfd71068ded1362d885e0195643693fa5c0522a"
+      },
+      {
+        "file": "csv-routes-bangalore.csv",
+        "url": "https://raw.githubusercontent.com/thecont1/traffic-monitor-lizard/fd4b32fb4c7507437fb7f5711d64b986e78bb2bb/data/csv-routes-bangalore.csv",
+        "bytes": 2211,
+        "sha256": "9f1ff6b7caaf646e277233ff6ef4ad1e5c8d26450920c69d8ad6ad3514eed8a4"
+      },
+      {
+        "file": "SCHEMA.md",
+        "url": "https://raw.githubusercontent.com/thecont1/traffic-monitor-lizard/fd4b32fb4c7507437fb7f5711d64b986e78bb2bb/data/SCHEMA.md",
+        "bytes": 15540,
+        "sha256": "cd312321431251eb5a341e9b3f09c97cd0aa65079a41c45a3050f02ef1555e5f"
+      }
+    ]
+  }
+}
