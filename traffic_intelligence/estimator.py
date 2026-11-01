@@ -86,6 +86,29 @@ def robust_reference(values):
     return {'median': median, 'scale': scale, 'count': len(values)}
 
 
+def classify_traffic_volume(hourly_estimate, daily_counts):
+    """Three volume bands from earlier daily-count terciles / 24, not road capacity."""
+    if not np.isfinite(hourly_estimate) or hourly_estimate < 0:
+        raise ValueError('Traffic volume must be a finite, nonnegative estimate.')
+    counts = np.asarray(daily_counts, dtype=float)
+    counts = counts[np.isfinite(counts) & (counts > 0)]
+    value = int(round(float(hourly_estimate)))
+    result = {'level': 'Unavailable', 'value': value, 'unit': 'estimated vehicles/hour',
+              'lower_threshold': None, 'upper_threshold': None, 'reference_count': len(counts),
+              'method': 'Earlier daily-count terciles divided by 24; estimated hourly reference.',
+              'boundary_rule': 'Below lower: Low; above upper: High; both boundaries included in Moderate.',
+              'minimum_reference_days': 8}
+    if len(counts) < result['minimum_reference_days']:
+        return result
+    lower, upper = np.quantile(counts, [1 / 3, 2 / 3]) / 24
+    # Round cutoffs outward and compare the displayed whole-vehicle estimate,
+    # so a rounded value on a visible boundary cannot get a conflicting label.
+    lower, upper = int(np.floor(lower)), int(np.ceil(upper))
+    level = 'Low' if value < lower else 'High' if value > upper else 'Moderate'
+    result.update(level=level, lower_threshold=lower, upper_threshold=upper)
+    return result
+
+
 def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=None, weather_metadata=None, now=None):
     target = local_time(timestamp)
     current = local_time(now if now is not None else pd.Timestamp.now(tz=TIMEZONE))
@@ -143,6 +166,7 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
     reference_values = prior.loc[prior.timestamp >= day - pd.Timedelta('28D'), 'y']
     if len(reference_values) < 8 and not prior.empty:
         reference_values = prior.loc[prior.timestamp >= prior.timestamp.max() - pd.Timedelta('90D'), 'y']
+    classification = classify_traffic_volume(hourly_estimate, reference_values)
     reference = robust_reference(reference_values)
     volume_z = None
     normal_hourly = None
@@ -167,11 +191,6 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
     largest = max(scores, key=abs) if scores else None
     flagged = largest is not None and abs(largest) > 3
     state = ('Predicted unusual traffic' if future else 'Estimated unusual traffic') if flagged else ('Within usual range' if scores else 'Insufficient earlier reference')
-    if not recent.empty:
-        quantiles = recent.pace.quantile([.33, .75, .90]).to_numpy()
-        level = ['Low', 'Moderate', 'High', 'Very high'][int(np.searchsorted(quantiles, float(selected.pace)))]
-    else:
-        level = 'Retrospective estimate'
     no_weather_row = row.assign(weather_context='Unknown')
     model_context_value = _daily_prediction(bundle, row)
     weather_response = model_context_value - _daily_prediction(bundle, no_weather_row)
@@ -198,7 +217,8 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
         'hourly_estimate': hourly_estimate, 'hourly_unit': 'vehicles in the selected hour',
         'daily_estimate': float(daily_estimate), 'observed_daily': observed_daily,
         'normal_hourly': float(normal_hourly) if normal_hourly is not None else None,
-        'traffic_level': level, 'weather': weather, 'daily_weather_context': daily_weather,
+        'traffic_level': classification['level'], 'traffic_classification': classification,
+        'weather': weather, 'daily_weather_context': daily_weather,
         'weather_metadata': metadata,
         'calendar': {'holiday_name': str(row.holiday_name.iloc[0]), 'is_holiday': bool(row.is_holiday.iloc[0]),
                      'is_festival': bool(row.is_festival.iloc[0]), 'festival_window': bool(row.festival_window.iloc[0]),

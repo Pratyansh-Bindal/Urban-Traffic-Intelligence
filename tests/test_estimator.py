@@ -7,7 +7,7 @@ import pytest
 
 from traffic_intelligence.calendar import FESTIVAL_FEATURES
 from traffic_intelligence.context import CONDITION_FEATURES, TIME_FEATURES, add_context, condition_frame
-from traffic_intelligence.estimator import estimate_traffic
+from traffic_intelligence.estimator import classify_traffic_volume, estimate_traffic
 from traffic_intelligence.features import BASIC_FEATURES, HISTORY_FEATURES
 from traffic_intelligence.models import build_model
 from traffic_intelligence.settings import EVENTS
@@ -60,6 +60,45 @@ def test_common_time_features_do_not_force_traffic_levels():
     assert 'prediction' not in output
 
 
+@pytest.mark.parametrize('estimate,expected', [
+    (132, 'Low'), (133, 'Moderate'), (150, 'Moderate'), (167, 'Moderate'), (168, 'High'),
+    (132.51, 'Moderate'), (167.49, 'Moderate'), (167.51, 'High'),
+])
+def test_volume_classification_uses_visible_count_boundaries(estimate, expected):
+    result = classify_traffic_volume(estimate, np.linspace(2400, 4800, 13))
+    assert result['lower_threshold'] == 133
+    assert result['upper_threshold'] == 167
+    assert result['level'] == expected
+
+
+def test_volume_thresholds_scale_with_each_roads_history():
+    smaller = classify_traffic_volume(168, np.linspace(2400, 4800, 13))
+    larger = classify_traffic_volume(168, np.linspace(4800, 9600, 13))
+    assert smaller['level'] == 'High'
+    assert larger['level'] == 'Low'
+    assert larger['lower_threshold'] == 266 and larger['upper_threshold'] == 334
+
+
+def test_constant_daily_history_has_explicit_low_moderate_high_boundaries():
+    for estimate, expected in [(99, 'Low'), (100, 'Moderate'), (101, 'High')]:
+        result = classify_traffic_volume(estimate, [2400] * 8)
+        assert result['lower_threshold'] == result['upper_threshold'] == 100
+        assert result['level'] == expected
+
+
+def test_insufficient_valid_history_does_not_default_to_moderate():
+    result = classify_traffic_volume(100, [2400] * 7 + [np.nan, np.inf, -2400])
+    assert result['level'] == 'Unavailable'
+    assert result['reference_count'] == 7
+    assert result['lower_threshold'] is None and result['upper_threshold'] is None
+
+
+def test_invalid_vehicle_estimate_is_not_given_a_traffic_label():
+    for estimate in [np.nan, np.inf, -1]:
+        with pytest.raises(ValueError, match='finite, nonnegative'):
+            classify_traffic_volume(estimate, [2400] * 8)
+
+
 def test_past_lookup_retains_recorded_daily_count_and_labels_hourly_estimate(estimator_data):
     bundle, volume, journey = estimator_data
     result = estimate_traffic(bundle, volume, journey, 'Ballari Road', '2023-04-05 12:30', now='2023-04-11')
@@ -72,6 +111,9 @@ def test_past_lookup_retains_recorded_daily_count_and_labels_hourly_estimate(est
     assert result['reference_travel_source'] == 'Recorded reference-route travel estimate'
     assert result['anomaly']['observed_daily_z'] is not None
     assert 'daily count is recorded' in result['summary']
+    assert result['traffic_level'] == result['traffic_classification']['level']
+    assert result['traffic_level'] in ['Low', 'Moderate', 'High']
+    assert result['summary'].startswith(result['traffic_level'] + ' hourly traffic:')
     json.dumps(result, allow_nan=False)
 
 
@@ -90,6 +132,7 @@ def test_upcoming_estimate_excludes_unfinished_and_future_source_observations(es
     assert after['hourly_estimate'] == before['hourly_estimate']
     assert after['observed_daily'] is None
     assert after['anomaly'] == before['anomaly']
+    assert after['traffic_classification'] == before['traffic_classification']
     assert after['kind'] == 'Forecast estimate'
 
 

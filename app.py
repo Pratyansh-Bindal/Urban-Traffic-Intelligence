@@ -76,15 +76,25 @@ def show_result(result, record_id=None):
     start, end = pd.Timestamp(result['period_start']), pd.Timestamp(result['period_end'])
     st.markdown(f'<div class="hero"><h2>{escape(result["road"])}</h2><p>{target:%A, %d %B %Y · %H:%M} IST · {escape(result["kind"])}</p></div>', unsafe_allow_html=True)
     weather, calendar = result['weather'], result['calendar']
+    classification = result.get('traffic_classification')
     weather_label = WEATHER_LABELS.get(weather['condition'], weather['condition'])
     a, b, c, d = st.columns(4)
     a.metric('Estimated vehicles in selected hour', f'{result["hourly_estimate"]:,.0f}',
              help=f'Hour: {start:%H:%M}–{end:%H:%M}. An hourly estimate allocated from daily volume using learned travel patterns.')
     b.metric('Recorded daily vehicles' if result['observed_daily'] is not None else 'Estimated daily vehicles', f'{result["daily_estimate"]:,.0f}')
-    c.metric('Traffic condition', result['traffic_level'], help='Based on the reference corridor’s travel pace relative to its historical distribution.')
+    c.metric('Traffic condition', result['traffic_level'],
+             help='Estimated vehicles per hour compared with two road-specific volume thresholds. Both cutoff values belong to Moderate.' if classification else 'Saved label from the earlier travel-time classification.')
     d.metric('Weather condition', weather_label,
              help='Weather type for the selected hour, fetched automatically. Daily-volume estimates also use weather category; temperature and humidity are additional travel-pattern inputs.')
     st.caption(f'Hourly estimate covers {start:%d %b, %H:%M}–{end:%H:%M} IST. Vehicle count means vehicles passing during this hour.')
+    if classification and classification['lower_threshold'] is not None:
+        lower, upper = classification['lower_threshold'], classification['upper_threshold']
+        st.markdown(f'**Low:** below **{lower:,}** · **Moderate:** **{lower:,}–{upper:,}** inclusive · **High:** above **{upper:,}** estimated vehicles/hour.')
+        st.caption(f'Cutoffs for {result["road"]} use {classification["reference_count"]} earlier daily counts converted to an hourly average. These are estimated hourly reference thresholds.')
+    elif classification:
+        st.caption('Traffic classification unavailable: at least 8 earlier recorded days are needed for the volume thresholds.')
+    else:
+        st.caption('This saved result uses an earlier travel-time label. Run a new estimate to see the current count thresholds.')
     st.markdown('**Prediction summary**')
     st.write(result.get('summary') or prediction_summary(result))
     left, right = st.columns(2)
@@ -136,10 +146,15 @@ def show_result(result, record_id=None):
     if 'usual_vehicles' in profile and profile.usual_vehicles.notna().any():
         figure.add_trace(go.Scatter(x=profile.timestamp, y=profile.usual_vehicles, name='Historical reference',
                                     mode='lines', line=dict(color='#476C9B', width=2, dash='dot')))
+    if classification and classification['lower_threshold'] is not None:
+        figure.add_hline(y=classification['lower_threshold'], line_color=TEAL, line_dash='dash',
+                         annotation_text=f'Low cutoff: {classification["lower_threshold"]:,}', annotation_position='bottom left')
+        figure.add_hline(y=classification['upper_threshold'], line_color='#C65E4B', line_dash='dash',
+                         annotation_text=f'High cutoff: {classification["upper_threshold"]:,}', annotation_position='top left')
     figure.update_xaxes(dtick=7200000, tickformat='%H:%M', title='Hour beginning · IST')
     figure.update_yaxes(title='Estimated vehicles per hour')
     chart(figure)
-    st.caption('The highlighted bar is the selected hour. The 24 hourly estimates sum to the daily volume above. The dotted line shows the historical reference when enough earlier records exist.')
+    st.caption('The highlighted bar is the selected hour. The 24 hourly estimates sum to the daily volume above. The dotted line shows the historical reference when enough earlier records exist; horizontal guides mark the volume-classification cutoffs.')
     st.subheader('Patterns learned from travel data')
     period_means = [profile.loc[profile.hour.between(lo, hi), 'estimated_vehicles'].mean()
                     for lo, hi in [(0, 5), (6, 9), (12, 14), (17, 19)]]

@@ -57,6 +57,10 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     assert 'forecast rain' in summary and 'Rajyotsava' in summary
     assert any(item.value == summary for item in app.markdown)
     assert any(item.label == 'Estimated vehicles in selected hour' for item in app.metric)
+    classification = app.session_state['traffic_result']['traffic_classification']
+    assert element(app.metric, 'Traffic condition').value == classification['level']
+    assert any('**Low:** below' in item.value and '**High:** above' in item.value for item in app.markdown)
+    assert any(f'{classification["reference_count"]} earlier daily counts' in item.value for item in app.caption)
     assert len(storage.list_estimates(database)) == 1
     app.run()
     assert len(storage.list_estimates(database)) == 1
@@ -67,12 +71,13 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     saved = storage.get_estimate(record_id, database)
     assert saved['summary'] == summary
     # Records saved before summaries existed must still open with an explanation.
-    legacy = {key: value for key, value in saved.items() if key != 'summary'}
+    legacy = {key: value for key, value in saved.items() if key not in ('summary', 'traffic_classification')}
     monkeypatch.setattr(storage, 'get_estimate', lambda value: legacy)
     element(app.button, 'Open result').click().run()
     assert not app.exception
     assert 'summary' not in app.session_state['opened_result'][1]
-    assert any(item.value == summary for item in app.markdown)
+    assert any('forecast rain' in item.value and 'Rajyotsava' in item.value for item in app.markdown)
+    assert any('earlier travel-time label' in item.value for item in app.caption)
 
 
 def test_weather_failure_still_returns_a_labelled_estimate(tmp_path, monkeypatch):

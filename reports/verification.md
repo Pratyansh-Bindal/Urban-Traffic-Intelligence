@@ -52,6 +52,18 @@ Live forecast values above describe the verification run, not measured traffic o
 
 The subsequent weather-display update was also checked with all **45 tests passing** and a separate temporary browser preview. The result now has a prominent weather-condition card, available temperature/humidity/precipitation values and a visible explanation of weather inputs. The live preview showed **Rainy** for the selected hour and **Cloudy / overcast** as the day's most common category, with their separate roles labelled. Missing weather is shown as **Unavailable**. This display update did not require retraining.
 
+## Traffic classification update
+
+New predictions now use three explicit **vehicle-volume** bands, replacing the previous travel-pace label. For each road, the one-third and two-thirds quantiles of earlier daily counts are divided by 24. The lower cutoff is rounded down and the upper cutoff up. The displayed whole-vehicle hourly estimate is **Low** below the lower cutoff, **High** above the upper cutoff and **Moderate** between them, including both boundaries. At least eight earlier valid daily records are required. The cutoffs are estimated hourly references derived from daily counts, not measured hourly thresholds or road capacities.
+
+- **57 automated tests passed**, including exact boundaries, count rounding, constant histories, road-specific thresholds, insufficient data, invalid estimates, future-observation exclusion, saved-result compatibility and UI rendering.
+- **64 complete requests across all 16 roads passed** at 00:00, 08:00, 12:00 and 18:00 on 2 November 2026 using unavailable-weather fallback: 8 Low, 23 Moderate and 33 High. All labels matched the displayed count and stored cutoffs, and each road's cutoffs stayed consistent across the selected day.
+- For **100 Feet Road**, cutoffs were 1,058 and 1,554 vehicles/hour: 905 at 00:00 was Low, 1,403 at 12:00 Moderate and 1,702 at 18:00 High.
+- The live browser showed **Sarjapur Road at 18:30** as **High**: approximately 2,553 vehicles/hour exceeded its upper cutoff of 1,878; its lower cutoff was 1,355. Both rules were visible below the metrics, both horizontal guides rendered on the graph and the summary included the volume level.
+- Each new saved result includes its cutoffs, reference sample size, comparison value and boundary rule. Older saved results keep their original label and visibly identify the earlier travel-time classification.
+
+The trained predictions and anomaly Z-scores are unchanged; this is a transparent classification policy applied to the vehicle estimate. Full model retraining was not required. The earlier label was not hardcoded: a separate pre-change 1,152-hour probe produced 749 Moderate labels, reflecting its broad travel-pace band and the forecasts falling within it. That probe and the new 64-request check use different scenario sets and are not an accuracy comparison.
+
 ## Fixes made during verification
 
 1. **Consecutive searches:** request widgets now use stable keys and a fixed initial default, so the previous result cannot replace a new road/date/time submission.
@@ -78,6 +90,5 @@ The two reproduced functional failures were observed failing before the fixes an
 - Anomaly tests verify the detector logic and reference handling. They do not establish real incident-detection accuracy without labelled incidents.
 - The laptop-to-internet sharing launcher and public URL remain pending. The temporary browser server was loopback-only; visitor mode was verified locally.
 - These runs verify this Mac and Python version. Cross-platform installation and GitHub Actions are not covered by this report.
-- The repeated **Moderate** traffic-condition label is under investigation. This update does not change the existing travel-pace classification thresholds.
 
 Temporary environments, downloaded test copies, browser-test prediction records and the JSON test download were removed after verification. The preview server was stopped. Useful source changes, regression tests, local model artifacts and this report were retained. This report records the verification run; publication history is available in Git.

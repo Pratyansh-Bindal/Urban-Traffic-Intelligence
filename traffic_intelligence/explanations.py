@@ -12,6 +12,9 @@ def prediction_summary(result):
         headline = f'The daily count is recorded; about {count} vehicles are estimated for {period}.'
     else:
         headline = f'About {count} vehicles are estimated for {period}.'
+    classification = result.get('traffic_classification', {})
+    if classification.get('level') in ('Low', 'Moderate', 'High'):
+        headline = f'{classification["level"]} hourly traffic: ' + headline[0].lower() + headline[1:]
 
     weather = result['weather']
     if weather['condition'] == 'Unknown':
