@@ -31,13 +31,16 @@ To retrain only the main traffic estimator:
 
 Python 3.11 or newer is recommended. `requirements-lock.txt` records the exact versions used with Python 3.14.5; use `requirements.txt` for another Python version. Keep the original CSV; its redistribution licence has not been established. Raw data, trained binaries and personal prediction records are ignored by Git.
 
+See [the verification report](reports/verification.md) for the 1 November 2026 clean-install, retraining, live-service and browser checks, including remaining validation limits.
+
 ## What the app shows
 
 Choose a road, date and time, then press **Estimate traffic**. No weather selection, calendar entry or manual traffic multiplier is required.
 
 - **Selected hour:** estimated vehicles passing during `[hour, hour + 1h)`. A time such as 12:30 selects the 12:00–13:00 hour; it does not claim vehicles physically occupying a road at that instant.
 - **Daily volume:** the recorded daily value when a completed past road/date is present; otherwise a conditional ML estimate. Missing historical records are estimated and labelled.
-- **Conditions:** automatic weather, holiday/festival context, day period and the reference corridor's relative traffic condition.
+- **Conditions:** a prominent weather-condition card (rainy, clear skies, cloudy/overcast, foggy or windy), plus holiday/festival context, day period and the reference corridor's relative traffic condition. The weather panel shows available temperature, humidity and precipitation, identifies the day's weather category used for daily-volume estimation and explains the travel model's dry/rainy grouping.
+- **Prediction summary:** a short explanation of the estimated hour, weather, festival/calendar context, road reference patterns and anomaly result. Missing weather is disclosed; conditions are context, not proven causes of changes in traffic. The summary is saved with the result and included in its JSON download.
 - **Anomalies:** robust Z-scores against earlier real records, with separate volume and travel-pace details. Future alerts describe predicted unusual traffic, not confirmed incidents.
 - **Graphs:** a 24-hour traffic profile, overnight/morning/lunch/evening comparisons and recorded daily history.
 - **Saved estimates:** persistent local records, downloadable JSON/CSV and comparison with measured daily counts when those later become available.
@@ -93,6 +96,14 @@ Saved estimates are **not** reclassified as measurements and are never read as m
 
 The dashboard reads the latest 1,000 saved requests. The database retains earlier records as well. Estimates are stored locally; there is no background traffic-feed subscription or automatic scraping of Google Maps.
 
+For a server that will be shared, enable visitor mode:
+
+```bash
+TRAFFIC_PUBLIC_MODE=1 .venv/bin/python -m streamlit run app.py
+```
+
+Visitor mode limits saved-result lists, exports and result opening to requests made in the current browser session, and hides Research explorer. A new session starts with an empty history; the laptop still retains the records locally. The normal local command shows the owner's full saved history. This setting does not create a public URL; the laptop-sharing launcher is still pending.
+
 ## Evaluation and anomaly method
 
 All rows for a civil date stay together: earliest 70% train, next 7.5% model selection, next 7.5% calibration and final 15% test. Model weights are fitted on the training partition; test rows do not choose the model.
@@ -131,6 +142,7 @@ The supplied report's baseline/ML and robust-Z-score approach guides the work. T
 | `context.py` | Day periods, airport/corridor features and explicit road references |
 | `estimation_training.py` | Main conditional ML models and chronological evaluation |
 | `estimator.py` | Past lookup, future estimate, hourly allocation and anomaly assessment |
+| `explanations.py` | Brief prediction summaries grounded in the stored conditions and anomaly result |
 | `storage.py` | Persistent prediction records and reconciliation with later measurements |
 | `weather.py`, `calendar.py` | Weather services, Karnataka holidays, local events and ICS |
 | `data.py`, `download.py` | Schema audits, completed-hour aggregation and pinned source downloads |

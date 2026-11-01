@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from .context import add_context, condition_frame, road_context
+from .explanations import prediction_summary
 from .settings import EVENTS, TIMEZONE
 
 
@@ -54,7 +55,7 @@ def _profile(bundle, journey, road, day, weather_frame, now, *, neutral=False):
     queries['weather'] = ['Dry' if w['condition'] in ('Clear', 'Overcast') else w['condition'] for w in weather]
     queries['temperature'] = [w['temperature'] for w in weather]
     queries['humidity'] = [w['humidity'] for w in weather]
-    queries = condition_frame(queries)
+    queries = condition_frame(queries, as_of=now)
     queries['pace'] = np.maximum(.001, bundle['models']['travel_pace'].predict(queries))
     profile = queries.groupby('timestamp').pace.median().reindex(hours.timestamp).reset_index()
     profile['source'] = 'ML travel-pattern estimate'
@@ -112,7 +113,7 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
     for name in ('speed', 'temperature', 'humidity'):
         if name in query:
             query[name] = np.nan
-    features = condition_frame(pd.concat([prior, query], ignore_index=True), use_history=True)
+    features = condition_frame(pd.concat([prior, query], ignore_index=True), use_history=True, as_of=current)
     row = features.loc[features.timestamp.eq(day)].copy()
     daily_estimate = observed_daily if observed_daily is not None else _daily_prediction(bundle, row)
     profile, routes = _profile(bundle, journey, road, day, weather_frame, current)
@@ -181,7 +182,7 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
     no_calendar['days_to_festival'] = no_calendar['days_since_festival'] = 60
     calendar_response = model_context_value - _daily_prediction(bundle, no_calendar)
     context = road_context(road)
-    selected_context = add_context(pd.DataFrame({'timestamp': [target], 'entity': [road], 'label': [road]})).iloc[0]
+    selected_context = add_context(pd.DataFrame({'timestamp': [target], 'entity': [road], 'label': [road]}), as_of=current).iloc[0]
     normal_shares = neutral.set_index('timestamp').share
     profile_rows = [{'timestamp': str(r.timestamp), 'estimated_vehicles': float(r.vehicles),
                      'usual_vehicles': float(reference['median'] * normal_shares.loc[r.timestamp]) if reference else None,
@@ -189,7 +190,7 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
                     for r in profile.itertuples()]
     daily_quality = bundle['report']['models']['daily_volume']
     pace_quality = bundle['report']['models']['travel_pace']
-    return {
+    result = {
         'road': road, 'requested_at': str(target), 'period_start': str(hour),
         'generated_at_utc': pd.Timestamp.now(tz='UTC').isoformat(), 'input_cutoff_local': str(current),
         'period_end': str(hour + pd.Timedelta('1h')), 'timezone': TIMEZONE,
@@ -227,3 +228,5 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
         'history': [{'date': str(r.timestamp), 'vehicles': float(r.y)} for r in prior.tail(40).itertuples()],
         'allocation_note': bundle['report']['hourly_volume_protocol'], 'warnings': warnings,
     }
+    result['summary'] = prediction_summary(result)
+    return result

@@ -13,7 +13,7 @@ WEATHER_FEATURES = ['weather_last', 'temperature_last', 'humidity_last', 'feels_
                     'weather_age_hours', 'weather_available']
 
 
-def make_features(observations: pd.DataFrame, dataset: str) -> pd.DataFrame:
+def make_features(observations: pd.DataFrame, dataset: str, *, as_of=None) -> pd.DataFrame:
     frame = observations.sort_values(['entity', 'timestamp']).copy()
     if frame.duplicated(['entity', 'timestamp']).any():
         raise ValueError('Feature generation requires unique entity-period keys.')
@@ -54,7 +54,7 @@ def make_features(observations: pd.DataFrame, dataset: str) -> pd.DataFrame:
         # A current source measurement can never enter features for its own period.
         parts.append(g)
     result = pd.concat(parts).sort_values(['timestamp', 'entity']).reset_index(drop=True)
-    return add_calendar_features(result)
+    return add_calendar_features(result, as_of=as_of)
 
 
 def feature_columns(weather: bool = True, festivals: bool = True) -> list[str]:

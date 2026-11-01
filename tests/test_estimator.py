@@ -71,6 +71,7 @@ def test_past_lookup_retains_recorded_daily_count_and_labels_hourly_estimate(est
     assert result['model']['hourly_count_test_mae'] is None
     assert result['reference_travel_source'] == 'Recorded reference-route travel estimate'
     assert result['anomaly']['observed_daily_z'] is not None
+    assert 'daily count is recorded' in result['summary']
     json.dumps(result, allow_nan=False)
 
 
@@ -101,6 +102,21 @@ def test_missing_historical_record_is_estimated_without_becoming_an_observation(
     assert result['daily_estimate'] > 0
 
 
+def test_future_event_is_used_only_after_its_announcement(estimator_data, monkeypatch):
+    import traffic_intelligence.calendar as calendar_module
+    bundle, volume, journey = estimator_data
+    events = pd.DataFrame({'date': pd.to_datetime(['2023-04-12']), 'name': ['Local event'],
+                            'entity': ['*'], 'source': ['https://example.org/event'],
+                            'known_from': pd.to_datetime(['2023-04-11'])})
+    monkeypatch.setattr(calendar_module, 'custom_events', lambda: events)
+    before = estimate_traffic(bundle, volume, journey, 'Ballari Road', '2023-04-12 12:00', now='2023-04-10')
+    after = estimate_traffic(bundle, volume, journey, 'Ballari Road', '2023-04-12 12:00', now='2023-04-11')
+    assert not before['calendar']['is_custom_event']
+    assert 'local calendar event' not in before['summary']
+    assert after['calendar']['is_custom_event']
+    assert 'local calendar event' in after['summary']
+
+
 def test_provider_clear_and_overcast_use_the_travel_models_dry_category(estimator_data):
     bundle, volume, journey = estimator_data
     frame = pd.DataFrame({'timestamp': pd.date_range('2023-04-12', periods=24, freq='h'),
@@ -120,6 +136,7 @@ def test_prediction_storage_roundtrip_and_reconciliation_do_not_score_lookups(tm
     database = tmp_path / 'predictions.sqlite3'
     record_id = save_estimate(result, database)
     assert get_estimate(record_id, database) == result
+    assert get_estimate(record_id, database)['summary'] == result['summary']
     assert len(list_estimates(database)) == 1
     compared = compare_with_observations(list_estimates(database), volume)
     assert compared.daily_absolute_error.isna().all()
@@ -139,6 +156,20 @@ def test_daily_forecast_error_waits_for_a_completed_real_observation():
     scored = compare_with_observations(records, measured, as_of='2026-11-02 00:00')
     assert scored.daily_absolute_error.iloc[0] == 20.
     assert scored.evaluation_status.iloc[0] == 'Measured daily count available'
+
+
+def test_saved_history_scope_filters_before_limit_and_blocks_other_ids(tmp_path, estimator_data):
+    bundle, volume, journey = estimator_data
+    result = estimate_traffic(bundle, volume, journey, 'Ballari Road', '2023-04-12 12:00', now='2023-04-11')
+    database = tmp_path / 'predictions.sqlite3'
+    mine = save_estimate(result, database)
+    other = save_estimate(result, database)
+    assert list_estimates(database, limit=1, record_ids=[mine]).id.tolist() == [mine]
+    assert list_estimates(database, record_ids=[]).empty
+    assert list_estimates(database, record_ids=["' OR 1=1 --"]).empty
+    assert get_estimate(mine, database, record_ids=[mine]) == result
+    with pytest.raises(ValueError, match='not found'):
+        get_estimate(other, database, record_ids=[mine])
 
 
 def test_weather_outside_horizon_makes_no_network_request(monkeypatch):

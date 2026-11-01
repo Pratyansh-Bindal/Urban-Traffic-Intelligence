@@ -35,8 +35,8 @@ def road_context(road):
             'reference_route': route, 'reference_relation': relation}
 
 
-def add_context(frame):
-    out = add_calendar_features(frame)
+def add_context(frame, *, as_of=None):
+    out = add_calendar_features(frame, as_of=as_of)
     hour = out.timestamp.dt.hour
     out['day_part'] = pd.cut(hour, bins=[-1, 5, 9, 11, 14, 16, 19, 23],
                              labels=['Overnight', 'Morning commute', 'Late morning', 'Lunch',
@@ -54,11 +54,11 @@ def add_context(frame):
     return out
 
 
-def condition_frame(frame, *, use_history=False):
+def condition_frame(frame, *, use_history=False, as_of=None):
     """Realised weather is training context, never claimed to be an archived forecast."""
     from .features import make_features
-    out = make_features(frame, 'volume') if use_history else frame.copy()
-    out = add_context(out)
+    out = make_features(frame, 'volume', as_of=as_of) if use_history else frame.copy()
+    out = add_context(out, as_of=as_of)
     out['weather_context'] = out.weather.fillna('Unknown')
     for column in ('temperature', 'humidity'):
         out[column + '_context'] = out[column] if column in out else float('nan')

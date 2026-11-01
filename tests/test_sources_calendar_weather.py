@@ -65,6 +65,17 @@ def test_calendar_export_uses_exclusive_next_day_end():
     assert ics.count('BEGIN:VEVENT')==ics.count('END:VEVENT')
 
 
+def test_event_announcement_cutoff_handles_utc_and_local_dates(tmp_path, monkeypatch):
+    file = tmp_path / 'events.csv'
+    file.write_text('date,name,entity,source,known_from\n2024-06-15,Local event,A,https://example.org/event,2024-06-14\n')
+    monkeypatch.setattr(calendar_module, 'EVENTS', file)
+    frame = pd.DataFrame({'timestamp': pd.to_datetime(['2024-06-15', '2024-06-15']), 'entity': ['A', 'B']})
+    before = add_calendar_features(frame, as_of='2024-06-13T18:29:59Z')
+    after = add_calendar_features(frame, as_of='2024-06-13T18:30:00Z')
+    assert before.is_custom_event.tolist() == [0, 0]
+    assert after.is_custom_event.tolist() == [1, 0]
+
+
 def test_state_observance_remains_visible_when_it_falls_on_sunday():
     table = holiday_table(2026, 2026).set_index('date')
     assert table.loc['2026-11-01', 'is_observance'] == 1

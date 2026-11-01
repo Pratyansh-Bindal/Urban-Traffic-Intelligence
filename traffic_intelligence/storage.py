@@ -39,17 +39,24 @@ def save_estimate(result, path=None):
     return record_id
 
 
-def list_estimates(path=None, limit=1000):
+def list_estimates(path=None, limit=1000, *, record_ids=None):
     path = Path(path or PREDICTIONS_DB)
     columns = ['id', 'created_at_utc', 'road', 'target_local', 'result_kind', 'hourly_estimate', 'daily_estimate', 'observed_daily']
-    if not path.exists():
+    if not path.exists() or record_ids == []:
         return pd.DataFrame(columns=columns)
+    clause, params = '', []
+    if record_ids is not None:
+        clause = ' WHERE id IN (' + ','.join('?' for _ in record_ids) + ')'
+        params.extend(record_ids)
+    params.append(int(limit))
     with _connect(path) as connection:
-        return pd.read_sql_query('SELECT ' + ','.join(columns) + ' FROM estimates ORDER BY created_at_utc DESC LIMIT ?',
-                                 connection, params=(int(limit),))
+        return pd.read_sql_query('SELECT ' + ','.join(columns) + ' FROM estimates' + clause + ' ORDER BY created_at_utc DESC LIMIT ?',
+                                 connection, params=params)
 
 
-def get_estimate(record_id, path=None):
+def get_estimate(record_id, path=None, *, record_ids=None):
+    if record_ids is not None and record_id not in record_ids:
+        raise ValueError('Saved estimate not found.')
     path = Path(path or PREDICTIONS_DB)
     if not path.exists():
         raise ValueError('Saved estimate not found.')

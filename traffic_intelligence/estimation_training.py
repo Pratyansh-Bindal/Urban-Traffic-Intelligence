@@ -1,6 +1,7 @@
 """Train the product's conditional volume and travel-pattern models on real labels."""
 from datetime import datetime, timezone
 import hashlib
+import importlib.metadata
 import json
 
 import joblib
@@ -73,11 +74,14 @@ def train_estimator(quick=False):
               'time_features': TIME_FEATURES,
               'airport_note': 'Airport-corridor identity is a feature. No always-busy rule or fixed lunch/morning multiplier is imposed.',
               'quick_mode': quick}
-    manifest = {'created_at_utc': created, 'sources': json.loads((RAW / 'sources.json').read_text()),
+    manifest = {'created_at_utc': created,
+                'versions': {name: importlib.metadata.version(name) for name in ['pandas', 'numpy', 'scikit-learn', 'holidays', 'streamlit']},
+                'sources': json.loads((RAW / 'sources.json').read_text()),
                 'custom_events_sha256': hashlib.sha256(EVENTS.read_bytes()).hexdigest() if EVENTS.exists() else None}
     payload = {'models': fitted, 'report': report, 'manifest': manifest, 'weather_priors': priors}
     temporary = folder / 'model.joblib.part'
     joblib.dump(payload, temporary, compress=3)
     temporary.replace(folder / 'model.joblib')
     (folder / 'report.json').write_text(json.dumps(report, indent=2, allow_nan=False))
+    (folder / 'manifest.json').write_text(json.dumps(manifest, indent=2, allow_nan=False))
     return report

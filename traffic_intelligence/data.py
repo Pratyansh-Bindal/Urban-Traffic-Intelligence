@@ -121,7 +121,7 @@ def load_journey(path: Path | None = None, as_of=None) -> tuple[pd.DataFrame, di
     routes_path = RAW / 'csv-routes-bangalore.csv'
     routes = pd.read_csv(routes_path) if routes_path.exists() else pd.DataFrame(columns=['route_code', 'label_short'])
     mapping = routes.drop_duplicates('route_code').set_index('route_code')['label_short'].to_dict()
-    frame['label'] = frame.entity.map(mapping).fillna(frame.entity)
+    frame['label'] = frame.entity.map(lambda entity: mapping.get(entity, entity))
     frame['area'] = 'Bengaluru monitored route'
     frame = frame.sort_values(['entity', 'timestamp']).reset_index(drop=True)
     audit = _summary(frame)

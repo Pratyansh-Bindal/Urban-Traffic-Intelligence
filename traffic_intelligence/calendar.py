@@ -6,7 +6,7 @@ import holidays
 import numpy as np
 import pandas as pd
 
-from .settings import EVENTS
+from .settings import EVENTS, TIMEZONE
 
 FESTIVAL_PATTERN = re.compile(r'ugadi|yugadi|deepavali|diwali|dussehra|dasara|vijaya|ganesh|vinayaka|sankranti|pongal|holi|christmas|eid|id-ul|id-e|bakrid|maha.*navami|rama? navami|krishna|janmashtami|good friday|muharram|maha.*shivaratri|rajyotsava', re.I)
 STATE_OBSERVANCE_SOURCE = 'https://dtek.karnataka.gov.in/storage/pdf-files/C-20%20syllabus/Balake%20Kannada-2.pdf'
@@ -65,7 +65,7 @@ def custom_events() -> pd.DataFrame:
     return events
 
 
-def add_calendar_features(frame: pd.DataFrame) -> pd.DataFrame:
+def add_calendar_features(frame: pd.DataFrame, *, as_of=None) -> pd.DataFrame:
     out = frame.copy()
     timestamp = pd.to_datetime(out.timestamp)
     date = timestamp.dt.normalize()
@@ -73,8 +73,13 @@ def add_calendar_features(frame: pd.DataFrame) -> pd.DataFrame:
     for col in ['holiday_name', *FESTIVAL_FEATURES[:-1]]:
         out[col] = date.map(table[col]).to_numpy()
     out['is_custom_event'] = 0
+    cutoff = pd.Timestamp(as_of) if as_of is not None else None
+    if cutoff is not None and cutoff.tzinfo is not None:
+        cutoff = cutoff.tz_convert(TIMEZONE).tz_localize(None)
     events = custom_events()
     for event in events.itertuples(index=False):
+        if cutoff is not None and event.known_from > cutoff:
+            continue
         mask = date.eq(event.date) & timestamp.ge(event.known_from)
         if event.entity not in ('', '*'):
             mask &= out.entity.eq(event.entity)

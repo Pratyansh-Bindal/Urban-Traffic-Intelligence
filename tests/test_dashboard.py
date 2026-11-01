@@ -14,6 +14,11 @@ PREPARED = all((ROOT / 'artifacts' / dataset / 'model.joblib').exists() for data
 pytestmark = pytest.mark.skipif(not PREPARED, reason='Train local artifacts to run dashboard integration checks.')
 
 
+@pytest.fixture(autouse=True)
+def local_mode(monkeypatch):
+    monkeypatch.delenv('TRAFFIC_PUBLIC_MODE', raising=False)
+
+
 def element(elements, label):
     return next(item for item in elements if item.label == label)
 
@@ -43,6 +48,14 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     assert app.session_state['traffic_result']['calendar']['is_festival']
     assert 'Rajyotsava' in app.session_state['traffic_result']['calendar']['holiday_name']
     assert app.session_state['traffic_result']['weather']['condition'] == 'Rain'
+    assert element(app.metric, 'Weather condition').value == 'Rainy'
+    assert any('Weather used for daily volume:' in item.value and 'Rainy' in item.value for item in app.markdown)
+    assert any('most common for the day' in item.value for item in app.markdown)
+    assert any('dry/rainy conditions, temperature and humidity' in item.value for item in app.caption)
+    assert any('Precipitation: 2.0 mm' in item.value for item in app.caption)
+    summary = app.session_state['traffic_result']['summary']
+    assert 'forecast rain' in summary and 'Rajyotsava' in summary
+    assert any(item.value == summary for item in app.markdown)
     assert any(item.label == 'Estimated vehicles in selected hour' for item in app.metric)
     assert len(storage.list_estimates(database)) == 1
     app.run()
@@ -50,6 +63,16 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     element(app.radio, 'Workspace').set_value('Saved estimates').run()
     assert not app.exception
     assert any(item.label == 'Saved estimates' and item.value == '1' for item in app.metric)
+    record_id = app.session_state['traffic_record_id']
+    saved = storage.get_estimate(record_id, database)
+    assert saved['summary'] == summary
+    # Records saved before summaries existed must still open with an explanation.
+    legacy = {key: value for key, value in saved.items() if key != 'summary'}
+    monkeypatch.setattr(storage, 'get_estimate', lambda value: legacy)
+    element(app.button, 'Open result').click().run()
+    assert not app.exception
+    assert 'summary' not in app.session_state['opened_result'][1]
+    assert any(item.value == summary for item in app.markdown)
 
 
 def test_weather_failure_still_returns_a_labelled_estimate(tmp_path, monkeypatch):
@@ -64,7 +87,57 @@ def test_weather_failure_still_returns_a_labelled_estimate(tmp_path, monkeypatch
     assert not app.exception, [error.message for error in app.exception]
     assert any('Weather unavailable' in item.value for item in app.markdown)
     assert app.session_state['traffic_result']['weather_metadata']['status'] == 'unavailable'
+    assert element(app.metric, 'Weather condition').value == 'Unavailable'
+    assert any('Weather used for daily volume:' in item.value and 'Seasonal weather patterns' in item.value for item in app.markdown)
+    assert 'weather unavailable' in app.session_state['traffic_result']['summary']
     assert app.session_state['traffic_record_id']
+
+
+def test_consecutive_searches_use_the_new_road_date_and_time(tmp_path, monkeypatch):
+    st.cache_data.clear()
+    database = tmp_path / 'predictions.sqlite3'
+    monkeypatch.setattr(storage, 'PREDICTIONS_DB', database)
+    monkeypatch.setattr(weather, 'fetch_weather_for_date', lambda *args, **kwargs:
+                        (pd.DataFrame(), {'status': 'unavailable', 'kind': 'connection_unavailable'}))
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=45).run()
+    for road, day, hour in [('Ballari Road', date(2026, 11, 1), time(12, 30)),
+                            ('Sarjapur Road', date(2026, 11, 2), time(18, 30))]:
+        element(app.selectbox, 'Road name').set_value(road)
+        element(app.date_input, 'Date').set_value(day)
+        element(app.time_input, 'Time · IST').set_value(hour)
+        element(app.button, 'Estimate traffic').click().run()
+        assert not app.exception
+        result = app.session_state['traffic_result']
+        assert result['road'] == road
+        assert result['requested_at'] == f'{day} {hour}'
+        assert any(item.value == result['summary'] for item in app.markdown)
+    records = storage.list_estimates(database)
+    assert len(records) == 2 and records.road.nunique() == 2
+
+
+def test_public_mode_keeps_history_private_between_browser_sessions(tmp_path, monkeypatch):
+    st.cache_data.clear()
+    monkeypatch.setenv('TRAFFIC_PUBLIC_MODE', '1')
+    monkeypatch.setattr(storage, 'PREDICTIONS_DB', tmp_path / 'predictions.sqlite3')
+    monkeypatch.setattr(weather, 'fetch_weather_for_date', lambda *args, **kwargs:
+                        (pd.DataFrame(), {'status': 'unavailable', 'kind': 'connection_unavailable'}))
+    first = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=45).run()
+    assert 'Research explorer' not in element(first.radio, 'Workspace').options
+    element(first.button, 'Estimate traffic').click().run()
+    assert not first.exception
+    first_id = first.session_state['traffic_record_id']
+    element(first.radio, 'Workspace').set_value('Saved estimates').run()
+    assert any(item.label == 'Saved estimates' and item.value == '1' for item in first.metric)
+    element(first.button, 'Open result').click().run()
+    assert not first.exception
+    assert first.session_state['opened_result'][0] == first_id
+
+    second = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=45).run()
+    element(second.radio, 'Workspace').set_value('Saved estimates').run()
+    assert not second.exception
+    assert any('Your first traffic estimate' in item.value for item in second.info)
+    assert not second.dataframe and not second.selectbox
+    assert len(storage.list_estimates()) == 1
 
 
 def test_research_branches_retain_all_analysis_views():

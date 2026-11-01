@@ -2,6 +2,7 @@
 from datetime import datetime
 from html import escape
 import json
+import os
 import sqlite3
 
 import joblib
@@ -12,6 +13,7 @@ from threadpoolctl import threadpool_limits
 
 from traffic_intelligence.context import road_context
 from traffic_intelligence.estimator import estimate_traffic
+from traffic_intelligence.explanations import prediction_summary
 from traffic_intelligence.settings import ARTIFACTS, TIMEZONE
 from traffic_intelligence.storage import compare_with_observations, get_estimate, list_estimates, save_estimate
 from traffic_intelligence.weather import fetch_weather_for_date
@@ -38,6 +40,9 @@ h1,h2,h3 {letter-spacing:-.035em;}
 </style>''', unsafe_allow_html=True)
 
 TEAL, AMBER, MUTED = '#0D8075', '#DB9B46', '#B7CACF'
+PUBLIC_MODE = os.environ.get('TRAFFIC_PUBLIC_MODE') == '1'
+WEATHER_LABELS = {'Rain': 'Rainy', 'Clear': 'Clear skies', 'Overcast': 'Cloudy / overcast',
+                  'Fog': 'Foggy', 'Windy': 'Windy', 'Dry': 'Dry', 'Unknown': 'Unavailable'}
 
 
 @st.cache_resource(show_spinner=False)
@@ -70,21 +75,41 @@ def show_result(result, record_id=None):
     target = pd.Timestamp(result['requested_at'])
     start, end = pd.Timestamp(result['period_start']), pd.Timestamp(result['period_end'])
     st.markdown(f'<div class="hero"><h2>{escape(result["road"])}</h2><p>{target:%A, %d %B %Y · %H:%M} IST · {escape(result["kind"])}</p></div>', unsafe_allow_html=True)
-    a, b, c = st.columns(3)
+    weather, calendar = result['weather'], result['calendar']
+    weather_label = WEATHER_LABELS.get(weather['condition'], weather['condition'])
+    a, b, c, d = st.columns(4)
     a.metric('Estimated vehicles in selected hour', f'{result["hourly_estimate"]:,.0f}',
              help=f'Hour: {start:%H:%M}–{end:%H:%M}. An hourly estimate allocated from daily volume using learned travel patterns.')
     b.metric('Recorded daily vehicles' if result['observed_daily'] is not None else 'Estimated daily vehicles', f'{result["daily_estimate"]:,.0f}')
     c.metric('Traffic condition', result['traffic_level'], help='Based on the reference corridor’s travel pace relative to its historical distribution.')
+    d.metric('Weather condition', weather_label,
+             help='Weather type for the selected hour, fetched automatically. Daily-volume estimates also use weather category; temperature and humidity are additional travel-pattern inputs.')
     st.caption(f'Hourly estimate covers {start:%d %b, %H:%M}–{end:%H:%M} IST. Vehicle count means vehicles passing during this hour.')
-    weather, calendar = result['weather'], result['calendar']
+    st.markdown('**Prediction summary**')
+    st.write(result.get('summary') or prediction_summary(result))
     left, right = st.columns(2)
     with left:
-        st.markdown('**Weather · automatic**')
+        st.markdown('**Weather conditions · automatic**')
         if weather['condition'] == 'Unknown':
             st.write('Weather unavailable · seasonal context used')
         else:
-            temperature = f' · {weather["temperature"]:.1f} °C' if weather['temperature'] is not None else ''
-            st.write(weather['condition'] + temperature)
+            st.write('**' + weather_label + '**')
+            details = []
+            if weather.get('temperature') is not None:
+                details.append(f'Temperature: {weather["temperature"]:.1f} °C')
+            if weather.get('humidity') is not None:
+                details.append(f'Humidity: {weather["humidity"]:.0f}%')
+            if weather.get('precipitation') is not None:
+                details.append(f'Precipitation: {weather["precipitation"]:.1f} mm')
+            if details:
+                st.caption(' · '.join(details))
+        if result['observed_daily'] is not None:
+            st.write('**Daily volume:** recorded count. Weather is shown as historical context.')
+        else:
+            daily_weather = result.get('daily_weather_context', 'Unknown')
+            daily_label = (WEATHER_LABELS.get(daily_weather, daily_weather) + ' (most common for the day)') if daily_weather != 'Unknown' else 'Seasonal weather patterns'
+            st.write(f'**Weather used for daily volume:** {daily_label}. Rain, clear/sunny skies, clouds, fog and wind are weather-category inputs.')
+        st.caption('Hourly travel patterns use dry/rainy conditions, temperature and humidity. Clear/sunny and cloudy skies share the dry category in the travel data.')
         st.caption(result['weather_metadata'].get('kind', 'unavailable').replace('_', ' ').capitalize() + ' · Bengaluru city centre')
     with right:
         st.markdown('**Calendar · automatic**')
@@ -140,7 +165,7 @@ def show_result(result, record_id=None):
             st.write(f'**Travel-pace Z-score:** {anomaly["travel_pace_z"]:+.2f}')
         st.caption(anomaly['note'])
     with st.expander('How the estimate was made'):
-        st.write('A trained vehicle-volume model uses the road, weekday, season, past counts, weather category and holiday/festival features. A second trained model estimates travel pace using hour, morning/lunch/evening periods, route, airport-corridor identity, weather and calendar context.')
+        st.write('A trained vehicle-volume model uses the road, weekday, season, past counts, weather category and holiday/festival features. A second trained model estimates travel pace using hour, morning/lunch/evening periods, route, airport-corridor identity, weather category, temperature, humidity and calendar context.')
         st.write('Hourly volume is an approximation: the daily volume is allocated across the day in proportion to the predicted travel pace. Travel delay and vehicle flow can differ, so this allocation remains a modelling assumption.')
         st.write(f'**Models:** {result["model"]["daily_volume"]} for daily volume; {result["model"]["travel_pace"]} for travel pace.')
         st.write(f'**Held-out daily MAE:** {result["model"]["daily_test_mae"]:,.0f} vehicles/day. **Travel-pace MAE:** {result["model"]["travel_pace_test_mae"]:.3f} minutes/km.')
@@ -159,18 +184,18 @@ def show_result(result, record_id=None):
 def predictor(bundle, volume, journey):
     st.markdown('<div class="eyebrow">BENGALURU / URBAN TRAFFIC INTELLIGENCE</div>', unsafe_allow_html=True)
     st.title('Estimate traffic before you leave.')
-    st.markdown('<p class="note">Choose the road and time. Weather, holidays, past traffic and travel patterns are connected automatically.</p>', unsafe_allow_html=True)
-    previous = st.session_state.get('traffic_result')
-    default = pd.Timestamp(previous['requested_at']) if previous else pd.Timestamp.now(tz=TIMEZONE).ceil('h')
+    st.markdown('<p class="note">Choose the road and time. Rain, clear skies, clouds and other weather conditions are connected automatically, along with holidays, past traffic and travel patterns.</p>', unsafe_allow_html=True)
+    if 'request_default' not in st.session_state:
+        st.session_state['request_default'] = pd.Timestamp.now(tz=TIMEZONE).ceil('h')
+    default = st.session_state['request_default']
     roads = sorted(volume.entity.unique())
-    road_index = roads.index(previous['road']) if previous and previous['road'] in roads else 0
     with st.form('traffic_request'):
         a, b, c = st.columns([2, 1, 1])
-        road = a.selectbox('Road name', roads, index=road_index,
+        road = a.selectbox('Road name', roads, key='request_road',
                            format_func=lambda name: name + (' · airport corridor' if road_context(name)['is_airport_corridor'] else ''))
         date = b.date_input('Date', value=default.date(), min_value=volume.timestamp.min().date(),
-                            max_value=(pd.Timestamp.now(tz=TIMEZONE) + pd.DateOffset(years=3)).date())
-        time = c.time_input('Time · IST', value=default.time().replace(tzinfo=None), step=900)
+                            max_value=(pd.Timestamp.now(tz=TIMEZONE) + pd.DateOffset(years=3)).date(), key='request_date')
+        time = c.time_input('Time · IST', value=default.time().replace(tzinfo=None), step=900, key='request_time')
         submitted = st.form_submit_button('Estimate traffic', type='primary', width='stretch')
     if submitted:
         target = pd.Timestamp(datetime.combine(date, time))
@@ -188,6 +213,7 @@ def predictor(bundle, volume, journey):
                 st.session_state['traffic_record_id'] = None
                 record_id = save_estimate(result)
                 st.session_state['traffic_record_id'] = record_id
+                st.session_state.setdefault('traffic_record_ids', []).append(record_id)
             except (ValueError, OSError, sqlite3.Error) as error:
                 st.error(f'The estimate could not be completed or saved: {error}')
     if 'traffic_result' in st.session_state:
@@ -200,7 +226,10 @@ def predictor(bundle, volume, journey):
 def saved_estimates(volume):
     st.title('Saved traffic estimates')
     st.caption('Each submitted estimate keeps its weather, calendar context, model version and anomaly scores. Measured traffic stays in the source datasets.')
-    records = compare_with_observations(list_estimates(), volume)
+    scope = {'record_ids': st.session_state.get('traffic_record_ids', [])} if PUBLIC_MODE else {}
+    if PUBLIC_MODE:
+        st.caption('Only estimates from this browser session are shown.')
+    records = compare_with_observations(list_estimates(**scope), volume)
     if records.empty:
         st.info('Your first traffic estimate will appear here.')
         return
@@ -216,15 +245,16 @@ def saved_estimates(volume):
         record_id = st.selectbox('Saved request', records.id.tolist(), format_func=lambda value:
                                  f'{records.loc[records.id.eq(value), "road"].iloc[0]} · {records.loc[records.id.eq(value), "target_local"].iloc[0]} · {value[:8]}')
         if st.button('Open result'):
-            st.session_state['opened_result'] = (record_id, get_estimate(record_id))
-    if 'opened_result' in st.session_state:
+            st.session_state['opened_result'] = (record_id, get_estimate(record_id, **scope))
+    if 'opened_result' in st.session_state and (not PUBLIC_MODE or st.session_state['opened_result'][0] in scope['record_ids']):
         record_id, result = st.session_state['opened_result']
         show_result(result, record_id)
 
 
 st.sidebar.markdown('### URBAN\nTRAFFIC INTELLIGENCE')
 st.sidebar.caption('Your road. Your time. An informed estimate.')
-workspace = st.sidebar.radio('Workspace', ['Traffic estimate', 'Saved estimates', 'Research explorer'])
+views = ['Traffic estimate', 'Saved estimates'] + ([] if PUBLIC_MODE else ['Research explorer'])
+workspace = st.sidebar.radio('Workspace', views)
 st.sidebar.divider()
 st.sidebar.caption('Weather connected through Open-Meteo. Calendar: Karnataka holidays and festivals. All times IST.')
 if workspace == 'Research explorer':
