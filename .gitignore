@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .idea/
+.tools/
 data/raw/*.csv
 artifacts/**/*.joblib
 artifacts/**/*.parquet

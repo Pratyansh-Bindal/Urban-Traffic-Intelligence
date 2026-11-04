@@ -12,6 +12,24 @@ The environment, data and trained models are already prepared on this Mac:
 
 Open the local URL printed by Streamlit, normally `http://localhost:8501`.
 
+### Share a public link from your laptop
+
+On this Mac, double-click **Share Traffic.command**, or run this from the project folder:
+
+```bash
+.venv/bin/python -m traffic_intelligence share
+```
+
+The launcher starts a separate visitor-mode app on local port **8502**, creates a temporary **HTTPS public link**, checks that it is reachable and opens it in your browser. Copy the **PUBLIC LINK** printed in the terminal and send it to someone; they can use it in a browser on another computer or phone, on another network. The app sidebar's **Share this app** section also contains the link.
+
+Keep the terminal open and the laptop awake and connected to the internet. **Ctrl+C stops the app and closes the link.** Restarting generates a different link. There is no account, domain or router-port-forwarding setup. Anyone who has the URL can open the app; this launcher does not add a login.
+
+The first run downloads the official [Cloudflare cloudflared 2026.10.7 release](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.7), verifies its release-asset SHA256 digest and keeps only the executable and its integrity checksum in ignored `.tools/`. Later runs reuse it. A `cloudflared` already on PATH is used instead. Automatic installation supports macOS and Linux on ARM64/x86-64, and Windows x86-64; only this Mac's ARM64 setup has been tested end to end. Use `--cloudflared /path/to/cloudflared` for another installation.
+
+If port 8502 is occupied, use `share --port 8503`. Use `share --no-browser` to print the link without opening it. The launcher waits for the new hostname to be published using [Cloudflare's HTTPS DNS API](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/), then checks the public app before printing its link. This avoids a premature local DNS lookup; it does not change your network settings. A failed startup stops its child processes and reports the problem; it never deliberately shares an existing local app. CORS and XSRF protections stay enabled, and the shared server listens on loopback.
+
+This is suitable for sharing a project demo with a few people. [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) have no uptime guarantee, use a changing hostname and limit concurrent in-flight requests. Your laptop's CPU, memory and internet connection also limit simultaneous predictions. A fixed link or availability while the laptop is off would require a hosted deployment.
+
 For a fresh checkout:
 
 ```bash
@@ -105,7 +123,7 @@ For a server that will be shared, enable visitor mode:
 TRAFFIC_PUBLIC_MODE=1 .venv/bin/python -m streamlit run app.py
 ```
 
-Visitor mode limits saved-result lists, exports and result opening to requests made in the current browser session, and hides Research explorer. A new session starts with an empty history; the laptop still retains the records locally. The normal local command shows the owner's full saved history. This setting does not create a public URL; the laptop-sharing launcher is still pending.
+Visitor mode limits saved-result lists, exports and result opening to requests made in the current browser session, and hides Research explorer. A new session starts with an empty history; the laptop still retains the records locally. The normal local command shows the owner's full saved history. Visitor mode alone does not create a public URL; the `share` launcher above enables it automatically and creates the link.
 
 ## Evaluation and anomaly method
 
@@ -147,6 +165,7 @@ The supplied report's baseline/ML and robust-Z-score approach guides the work. T
 | `estimator.py` | Past lookup, future estimate, hourly allocation and anomaly assessment |
 | `explanations.py` | Brief prediction summaries grounded in the stored conditions and anomaly result |
 | `storage.py` | Persistent prediction records and reconciliation with later measurements |
+| `sharing.py` | Public-link launcher, verified tunnel installation and process cleanup |
 | `weather.py`, `calendar.py` | Weather services, Karnataka holidays, local events and ICS |
 | `data.py`, `download.py` | Schema audits, completed-hour aggregation and pinned source downloads |
 | `features.py`, `models.py`, `training.py` | Historical features, ML pipelines and advance-forecast experiments |

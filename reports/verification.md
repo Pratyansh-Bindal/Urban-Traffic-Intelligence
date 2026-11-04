@@ -64,6 +64,22 @@ New predictions now use three explicit **vehicle-volume** bands, replacing the p
 
 The trained predictions and anomaly Z-scores are unchanged; this is a transparent classification policy applied to the vehicle estimate. Full model retraining was not required. The earlier label was not hardcoded: a separate pre-change 1,152-hour probe produced 749 Moderate labels, reflecting its broad travel-pace band and the forecasts falling within it. That probe and the new 64-request check use different scenario sets and are not an accuracy comparison.
 
+## Public-link launcher · 4 November 2026
+
+The laptop-sharing feature is implemented. Run `python -m traffic_intelligence share` with the project environment, or double-click `Share Traffic.command` on this Mac. The launcher owns a separate loopback Streamlit server and a Cloudflare Quick Tunnel, enables visitor mode, prints a verified HTTPS URL and exposes it in the sidebar. Ctrl+C, terminal termination and startup failures clean up the child processes. The normal owner dashboard remains available through the original local command.
+
+- **74 automated tests passed**, with no skips. The new cases cover download integrity and reuse, corrupt-cache repair, safe archive handling, URL validation, the real Streamlit CLI's host/origin lists, visitor mode, startup failures, shutdown, browser-opening failure, occupied ports and DNS-publication ordering. Existing model, temporal-integrity and dashboard checks still pass.
+- All **29 Python files** parsed successfully; the Mac shortcut passed `zsh -n` and retains executable permissions. `git diff --check` passed.
+- The official macOS ARM64 cloudflared 2026.10.7 archive matched its GitHub release-asset digest (`3586ccf397e98e5f437e60e7c307ca6ac463e110580503af8bb8e6f9ebf831bd`). Only the executable and its integrity checksum are retained in ignored `.tools/`; the archive is not retained.
+- The app was opened through its actual public HTTPS hostname, including an interactive WebSocket session. A **100 Feet Road, 6 November 2026, 18:30 IST** request returned approximately **1,740 vehicles/hour**, **High**, cloudy/overcast weather, festival context, the summary and graphs. This is a test prediction, not a measured count. The browser recorded no error-level console messages.
+- A separate visitor session saw an empty saved history while the first visitor retained its request. Research explorer was absent. These checks used a temporary source copy and database while reading the existing trained artifacts, leaving personal prediction records untouched.
+- Public HTTPS prediction checks passed again after restarting with a new hostname and automatically reusing the installed executable. The sidebar displayed the complete copyable URL with wrapped lines.
+- Live shutdown checks confirmed that the local listener stopped and the old public health endpoint returned an unavailable response. A second launcher targeting an active shared-app port failed before creating another tunnel.
+
+The restart checks exposed two startup issues: a recently closed TCP connection could make the port check report a false conflict, and a premature lookup could leave macOS with a stale negative DNS result for a new hostname. The port check now allows TCP address reuse on POSIX while rejecting active listeners; on Windows it requests exclusive address use. Startup waits for a positive public DNS record through Cloudflare's HTTPS DNS API before using the normal OS resolver. DNS settings and certificate verification remain unchanged. Failures report the last health-check error and stop sharing without claiming a usable link.
+
+Verification covers this Mac's ARM64 runtime. Other listed download platforms have not been tested end to end. Quick Tunnels have changing URLs and no uptime guarantee; laptop availability, network restrictions and available CPU/memory still limit sharing. A fixed hostname or service while the laptop is off requires a hosted deployment. Test tunnels were stopped and temporary test files removed after verification.
+
 ## Fixes made during verification
 
 1. **Consecutive searches:** request widgets now use stable keys and a fixed initial default, so the previous result cannot replace a new road/date/time submission.
@@ -88,7 +104,7 @@ The two reproduced functional failures were observed failing before the fixes an
 - The main estimator still selects between the two ML candidates. Its reported seasonal baselines have slightly lower test MAE; making baselines eligible would require validation-based model selection, rather than switching based on the final test set.
 - Weather and festival connections are working; their presence does not establish a causal effect or a consistent improvement in accuracy. Recorded-weather conditional evaluation is distinct from an archived weather-forecast backtest.
 - Anomaly tests verify the detector logic and reference handling. They do not establish real incident-detection accuracy without labelled incidents.
-- The laptop-to-internet sharing launcher and public URL remain pending. The temporary browser server was loopback-only; visitor mode was verified locally.
+- Laptop sharing is verified above. It uses a temporary Quick Tunnel; a stable public deployment and availability while the laptop is off remain future work.
 - These runs verify this Mac and Python version. Cross-platform installation and GitHub Actions are not covered by this report.
 
 Temporary environments, downloaded test copies, browser-test prediction records and the JSON test download were removed after verification. The preview server was stopped. Useful source changes, regression tests, local model artifacts and this report were retained. This report records the verification run; publication history is available in Git.

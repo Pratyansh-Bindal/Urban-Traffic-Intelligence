@@ -15,6 +15,7 @@ from traffic_intelligence.context import road_context
 from traffic_intelligence.estimator import estimate_traffic
 from traffic_intelligence.explanations import prediction_summary
 from traffic_intelligence.settings import ARTIFACTS, TIMEZONE
+from traffic_intelligence.sharing import PUBLIC_URL
 from traffic_intelligence.storage import compare_with_observations, get_estimate, list_estimates, save_estimate
 from traffic_intelligence.weather import fetch_weather_for_date
 
@@ -272,6 +273,12 @@ views = ['Traffic estimate', 'Saved estimates'] + ([] if PUBLIC_MODE else ['Rese
 workspace = st.sidebar.radio('Workspace', views)
 st.sidebar.divider()
 st.sidebar.caption('Weather connected through Open-Meteo. Calendar: Karnataka holidays and festivals. All times IST.')
+public_url = os.environ.get('TRAFFIC_PUBLIC_URL', '')
+if PUBLIC_MODE and PUBLIC_URL.fullmatch(public_url):
+    with st.sidebar.expander('Share this app'):
+        st.caption('Copy this link to open the app on another device.')
+        st.code(public_url, language=None, wrap_lines=True)
+        st.caption('Available while the host laptop is awake, online and running the app. Restarting creates a new link.')
 if workspace == 'Research explorer':
     from traffic_intelligence.research_ui import render_research
     render_research()

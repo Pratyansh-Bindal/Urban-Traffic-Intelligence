@@ -17,6 +17,7 @@ pytestmark = pytest.mark.skipif(not PREPARED, reason='Train local artifacts to r
 @pytest.fixture(autouse=True)
 def local_mode(monkeypatch):
     monkeypatch.delenv('TRAFFIC_PUBLIC_MODE', raising=False)
+    monkeypatch.delenv('TRAFFIC_PUBLIC_URL', raising=False)
 
 
 def element(elements, label):
@@ -123,10 +124,13 @@ def test_consecutive_searches_use_the_new_road_date_and_time(tmp_path, monkeypat
 def test_public_mode_keeps_history_private_between_browser_sessions(tmp_path, monkeypatch):
     st.cache_data.clear()
     monkeypatch.setenv('TRAFFIC_PUBLIC_MODE', '1')
+    public_url = 'https://traffic-demo.trycloudflare.com'
+    monkeypatch.setenv('TRAFFIC_PUBLIC_URL', public_url)
     monkeypatch.setattr(storage, 'PREDICTIONS_DB', tmp_path / 'predictions.sqlite3')
     monkeypatch.setattr(weather, 'fetch_weather_for_date', lambda *args, **kwargs:
                         (pd.DataFrame(), {'status': 'unavailable', 'kind': 'connection_unavailable'}))
     first = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=45).run()
+    assert any(item.value == public_url for item in first.code)
     assert 'Research explorer' not in element(first.radio, 'Workspace').options
     element(first.button, 'Estimate traffic').click().run()
     assert not first.exception
