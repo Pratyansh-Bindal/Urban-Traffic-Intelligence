@@ -1,6 +1,8 @@
 """Short descriptions of the available prediction context, without causal claims."""
 from datetime import datetime
 
+from .weather import sky_condition_label
+
 
 def prediction_summary(result):
     """Explain an estimate using its stored inputs and anomaly reference only."""
@@ -22,8 +24,12 @@ def prediction_summary(result):
     else:
         kind = result['weather_metadata'].get('kind')
         prefix = 'forecast ' if kind == 'forecast' else 'historical ' if kind in ('historical_reanalysis', 'recent_model_history') else ''
+        sky_label = sky_condition_label(weather)
         condition = weather['condition'].lower()
-        weather_text = prefix + (condition + ' weather' if condition in ('clear', 'overcast', 'windy') else condition)
+        if sky_label:
+            weather_text = f'{prefix}{sky_label.lower()} skies'
+        else:
+            weather_text = prefix + (condition + ' weather' if condition in ('clear', 'overcast', 'windy') else condition)
         if weather.get('temperature') is not None:
             weather_text += f' ({weather["temperature"]:.0f} °C)'
 

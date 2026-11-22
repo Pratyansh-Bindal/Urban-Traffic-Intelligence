@@ -81,6 +81,36 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     assert any('earlier travel-time label' in item.value for item in app.caption)
 
 
+@pytest.mark.parametrize(('code', 'label', 'category'), [
+    (0, 'Clear', 'Clear'),
+    (1, 'Mainly clear', 'Overcast'),
+    (2, 'Partly cloudy', 'Overcast'),
+    (3, 'Overcast', 'Overcast'),
+])
+def test_forecast_sky_label_uses_selected_hours_provider_code(tmp_path, monkeypatch, code, label, category):
+    st.cache_data.clear()
+    monkeypatch.setattr(storage, 'PREDICTIONS_DB', tmp_path / 'predictions.sqlite3')
+    frame = weather.parse_outlook({'hourly': {
+        'time': ['2026-11-22T15:00', '2026-11-22T16:00'],
+        'weather_code': [45, code],
+        'wind_speed_10m': [10, 10],
+    }})
+    metadata = {'status': 'available', 'kind': 'forecast', 'provider': 'Open-Meteo', 'location': 'Bengaluru city centre'}
+    monkeypatch.setattr(weather, 'fetch_weather_for_date', lambda *args, **kwargs: (frame, metadata))
+
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=45).run()
+    element(app.date_input, 'Date').set_value(date(2026, 11, 22))
+    element(app.time_input, 'Time · IST').set_value(time(16))
+    element(app.button, 'Estimate traffic').click().run()
+    assert not app.exception, [error.message for error in app.exception]
+    record = app.session_state['traffic_result']
+    assert record['weather']['condition'] == category
+    assert record['weather']['weather_code'] == code
+    assert element(app.metric, 'Weather condition').value == label
+    assert f'forecast {label.lower()} skies' in record['summary']
+    assert any('Open-Meteo · Bengaluru city centre · 16:00 IST' == item.value for item in app.caption)
+
+
 def test_weather_failure_still_returns_a_labelled_estimate(tmp_path, monkeypatch):
     st.cache_data.clear()
     monkeypatch.setattr(storage, 'PREDICTIONS_DB', tmp_path / 'predictions.sqlite3')

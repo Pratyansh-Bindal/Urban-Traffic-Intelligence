@@ -214,21 +214,28 @@ def wait_for_public_dns(url, processes, *, timeout=90):
     for the public health check and browser. No DNS settings are changed.
     """
     query = urlencode({'name': urlparse(url).hostname, 'type': 'A'})
-    request = urllib.request.Request('https://cloudflare-dns.com/dns-query?' + query,
-                                     headers={'Accept': 'application/dns-json'})
+    requests = [
+        urllib.request.Request(f'https://{host}/dns-query?{query}', headers={'Accept': 'application/dns-json'})
+        for host in ('one.one.one.one', 'cloudflare-dns.com')
+    ]
     context = ssl.create_default_context(cafile=certifi.where())
     deadline = time.monotonic() + timeout
-    last_error = 'The public hostname is not published yet'
+    not_published = 'The public hostname is not published yet'
+    last_error = not_published
     while time.monotonic() < deadline:
         for process, name, log in processes:
             check_process(process, name, log)
-        try:
-            with urllib.request.urlopen(request, context=context, timeout=3) as response:
-                answer = json.loads(response.read(65536))
+        for request in requests:
+            try:
+                with urllib.request.urlopen(request, context=context, timeout=3) as response:
+                    answer = json.loads(response.read(65536))
+            except (OSError, ValueError) as error:
+                last_error = str(error)
+                continue
             if answer.get('Status') == 0 and any(row.get('type') == 1 and row.get('data') for row in answer.get('Answer', [])):
                 return
-        except (OSError, ValueError) as error:
-            last_error = str(error)
+            last_error = not_published
+            break
         time.sleep(1)
     raise SharingError(f'Cloudflare has not published a usable public hostname. Try sharing again.\nLast check: {last_error}')
 

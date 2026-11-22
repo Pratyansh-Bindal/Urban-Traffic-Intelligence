@@ -211,7 +211,22 @@ def test_public_dns_waits_for_a_positive_address_record(monkeypatch):
     monkeypatch.setattr(sharing.urllib.request, 'urlopen', provider)
     monkeypatch.setattr(sharing.time, 'sleep', lambda seconds: None)
     sharing.wait_for_public_dns(URL, [])
-    assert requests == ['https://cloudflare-dns.com/dns-query?name=traffic-demo.trycloudflare.com&type=A'] * 2
+    assert requests == ['https://one.one.one.one/dns-query?name=traffic-demo.trycloudflare.com&type=A'] * 2
+
+
+def test_public_dns_uses_an_alternate_cloudflare_endpoint_on_tls_error(monkeypatch):
+    endpoints = []
+
+    def provider(request, **kwargs):
+        host = request.host
+        endpoints.append(host)
+        if host == 'one.one.one.one':
+            raise sharing.urllib.error.URLError('certificate verification failed')
+        return io.BytesIO(b'{"Status": 0, "Answer": [{"type": 1, "data": "104.16.230.132"}]}')
+
+    monkeypatch.setattr(sharing.urllib.request, 'urlopen', provider)
+    sharing.wait_for_public_dns(URL, [])
+    assert endpoints == ['one.one.one.one', 'cloudflare-dns.com']
 
 
 def test_occupied_port_is_rejected(tmp_path, monkeypatch):

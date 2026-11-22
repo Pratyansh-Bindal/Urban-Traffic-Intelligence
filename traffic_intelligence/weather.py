@@ -8,6 +8,16 @@ import pandas as pd
 from .download import get_bytes
 
 
+SKY_LABELS = {0: 'Clear', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast'}
+
+
+def sky_condition_label(weather):
+    """Display the provider's sky detail while preserving the traffic model category."""
+    if weather['condition'] in ('Clear', 'Overcast'):
+        return SKY_LABELS.get(weather.get('weather_code'))
+    return None
+
+
 def condition_from_wmo(code, wind_speed=0):
     if pd.isna(code):
         return 'Unknown'

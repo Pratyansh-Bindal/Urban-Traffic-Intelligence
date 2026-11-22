@@ -24,6 +24,9 @@ def _weather_at(frame, timestamp):
         return {'condition': 'Unknown', 'temperature': None, 'humidity': None, 'precipitation': None}
     row = selected.iloc[0]
     result = {'condition': str(row.get('condition', 'Unknown'))}
+    code = row.get('weather_code')
+    if pd.notna(code):
+        result['weather_code'] = int(code)
     for name in ('temperature', 'humidity', 'precipitation'):
         value = row.get(name)
         result[name] = float(value) if value is not None and pd.notna(value) else None

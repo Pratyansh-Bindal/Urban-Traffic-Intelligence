@@ -17,23 +17,29 @@ from traffic_intelligence.explanations import prediction_summary
 from traffic_intelligence.settings import ARTIFACTS, TIMEZONE
 from traffic_intelligence.sharing import PUBLIC_URL
 from traffic_intelligence.storage import compare_with_observations, get_estimate, list_estimates, save_estimate
-from traffic_intelligence.weather import fetch_weather_for_date
+from traffic_intelligence.weather import fetch_weather_for_date, sky_condition_label
 
 st.set_page_config(page_title='Urban Traffic Intelligence', page_icon='↗', layout='wide', initial_sidebar_state='auto')
 st.markdown('''<style>
 .stApp {font-family:system-ui,sans-serif;}
 .block-container {padding-top:3rem;max-width:1400px;padding-bottom:3rem;}
 h1,h2,h3 {letter-spacing:-.035em;}
-[data-testid="stSidebar"] {border-right:1px solid #DFE7EC;background:#FFF;}
-[data-testid="stMetric"] {background:#FFF;border:1px solid #E2E9ED;padding:1.1rem;border-radius:14px;}
-[data-testid="stMetricLabel"] {color:#627785;font-size:.85rem;}
+[data-testid="stMetric"] {
+ background:color-mix(in srgb,currentColor 4%,transparent);
+ border:1px solid color-mix(in srgb,currentColor 17%,transparent);
+ padding:1.1rem;border-radius:14px;
+}
+[data-testid="stMetricLabel"] {font-size:.85rem;}
 [data-testid="stMetricValue"] {font-weight:700;font-size:1.7rem;}
-[data-testid="stMetricLabel"] p,[data-testid="stMetricValue"] > div {white-space:normal!important;overflow:visible!important;overflow-wrap:break-word;}
-.eyebrow {font-size:.74rem;letter-spacing:.14em;color:#0D8075;font-weight:700;margin-bottom:.6rem;}
+[data-testid="stMetricLabel"] p,
+[data-testid="stMetricValue"] > div,
+[data-testid="stMetricValue"] p {white-space:normal!important;overflow:visible!important;overflow-wrap:break-word;}
+.eyebrow {font-size:.74rem;letter-spacing:.14em;color:light-dark(#0D8075,#62D3C5);font-weight:700;margin-bottom:.6rem;}
 .hero {background:#102F3C;color:#FFF;border-radius:18px;padding:1.5rem 1.8rem;margin:1rem 0 1.5rem;}
 .hero h2 {color:#FFF;margin:0;font-size:1.65rem;}
 .hero p {color:#BCD2DA;margin:.5rem 0 0;}
-.note {color:#647C8B;font-size:.9rem;line-height:1.6;}
+.note {opacity:.82;font-size:.9rem;line-height:1.6;}
+[data-testid="stPlotlyChart"] :is(.xtick,.ytick) text {fill:currentColor!important;}
 @media (max-width:1100px) {
  [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {flex-wrap:wrap;}
  [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="stColumn"] {min-width:165px;flex:1 1 40%;}
@@ -42,7 +48,7 @@ h1,h2,h3 {letter-spacing:-.035em;}
 
 TEAL, AMBER, MUTED = '#0D8075', '#DB9B46', '#B7CACF'
 PUBLIC_MODE = os.environ.get('TRAFFIC_PUBLIC_MODE') == '1'
-WEATHER_LABELS = {'Rain': 'Rainy', 'Clear': 'Clear skies', 'Overcast': 'Cloudy / overcast',
+WEATHER_LABELS = {'Rain': 'Rainy', 'Clear': 'Clear skies', 'Overcast': 'Cloud cover',
                   'Fog': 'Foggy', 'Windy': 'Windy', 'Dry': 'Dry', 'Unknown': 'Unavailable'}
 
 
@@ -63,12 +69,11 @@ def automatic_weather(selected_date, today):
 
 
 def chart(figure, height=330):
-    figure.update_layout(template='plotly_white', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                         font=dict(family='system-ui, sans-serif', color='#365260'),
+    figure.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                          height=height, margin=dict(l=10, r=10, t=25, b=10),
                          legend=dict(orientation='h', y=1.15, x=0), hovermode='x unified')
     figure.update_xaxes(showgrid=False)
-    figure.update_yaxes(gridcolor='#E4EBEF', zeroline=False)
+    figure.update_yaxes(zeroline=False)
     st.plotly_chart(figure, width='stretch', config={'displayModeBar': False})
 
 
@@ -78,7 +83,8 @@ def show_result(result, record_id=None):
     st.markdown(f'<div class="hero"><h2>{escape(result["road"])}</h2><p>{target:%A, %d %B %Y · %H:%M} IST · {escape(result["kind"])}</p></div>', unsafe_allow_html=True)
     weather, calendar = result['weather'], result['calendar']
     classification = result.get('traffic_classification')
-    weather_label = WEATHER_LABELS.get(weather['condition'], weather['condition'])
+    weather_metadata = result['weather_metadata']
+    weather_label = sky_condition_label(weather) or WEATHER_LABELS.get(weather['condition'], weather['condition'])
     a, b, c, d = st.columns(4)
     a.metric('Estimated vehicles in selected hour', f'{result["hourly_estimate"]:,.0f}',
              help=f'Hour: {start:%H:%M}–{end:%H:%M}. An hourly estimate allocated from daily volume using learned travel patterns.')
@@ -86,7 +92,11 @@ def show_result(result, record_id=None):
     c.metric('Traffic condition', result['traffic_level'],
              help='Estimated vehicles per hour compared with two road-specific volume thresholds. Both cutoff values belong to Moderate.' if classification else 'Saved label from the earlier travel-time classification.')
     d.metric('Weather condition', weather_label,
-             help='Weather type for the selected hour, fetched automatically. Daily-volume estimates also use weather category; temperature and humidity are additional travel-pattern inputs.')
+             help='Open-Meteo weather for the selected hour in Bengaluru city centre. Local conditions can vary.')
+    if weather['condition'] != 'Unknown':
+        provider = weather_metadata.get('provider', 'Open-Meteo')
+        location = weather_metadata.get('location', 'Bengaluru city centre')
+        d.caption(f'{provider} · {location} · {start:%H:%M} IST')
     st.caption(f'Hourly estimate covers {start:%d %b, %H:%M}–{end:%H:%M} IST. Vehicle count means vehicles passing during this hour.')
     if classification and classification['lower_threshold'] is not None:
         lower, upper = classification['lower_threshold'], classification['upper_threshold']
@@ -121,7 +131,7 @@ def show_result(result, record_id=None):
             daily_label = (WEATHER_LABELS.get(daily_weather, daily_weather) + ' (most common for the day)') if daily_weather != 'Unknown' else 'Seasonal weather patterns'
             st.write(f'**Weather used for daily volume:** {daily_label}. Rain, clear/sunny skies, clouds, fog and wind are weather-category inputs.')
         st.caption('Hourly travel patterns use dry/rainy conditions, temperature and humidity. Clear/sunny and cloudy skies share the dry category in the travel data.')
-        st.caption(result['weather_metadata'].get('kind', 'unavailable').replace('_', ' ').capitalize() + ' · Bengaluru city centre')
+        st.caption(weather_metadata.get('kind', 'unavailable').replace('_', ' ').capitalize())
     with right:
         st.markdown('**Calendar · automatic**')
         st.write(calendar['holiday_name'] or ('Near a festival' if calendar['festival_window'] else 'Regular day'))
