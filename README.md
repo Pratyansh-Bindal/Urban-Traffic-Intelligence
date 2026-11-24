@@ -95,6 +95,8 @@ For completed past dates the app first uses the available recorded daily count. 
 
 Future queries use only source observations completed by the current time. Source CSVs, rather than saved predictions, supply all historical features and anomaly references. Stale daily count inputs are disclosed alongside results.
 
+For dates after the last completed day in the count archive, the app applies a **10% annual growth assumption** to the daily estimate before allocating it to hours. The multiplier is `1.10 ** elapsed_years`, with fractions of a year calculated between archive anniversaries. This is a citywide scenario assumption for road volumes. The result and saved JSON include the baseline date, multiplier and daily estimate before adjustment. Recorded counts and estimates for missing records within the archive keep their original totals. Traffic levels compare against historical cutoffs, while the volume anomaly reference is scaled by the same multiplier as the estimate.
+
 ## Weather and calendar
 
 [Open-Meteo](https://open-meteo.com/en/docs) supplies city-centre hourly weather automatically on submission, cached for one hour. Forecast weather, recent model history and historical reanalysis are labelled separately. Requests outside the forecast horizon still receive an estimate using calendar/seasonal features and historical weather-category averaging. Network failures use the same disclosed fallback. No API key is needed.
@@ -129,7 +131,7 @@ Visitor mode limits saved-result lists, exports and result opening to requests m
 
 All rows for a civil date stay together: earliest 70% train, next 7.5% model selection, next 7.5% calibration and final 15% test. Model weights are fitted on the training partition; test rows do not choose the model.
 
-Main-estimator scores measure **conditional estimation given recorded weather**. They are not a backtest using archived provider weather forecasts. Reports include MAE, RMSE, R², baseline scores, weather ablation for daily volume and a time/corridor-feature ablation for travel pace. The hourly allocation has no measured count accuracy. Model input contrasts are associations, not causal weather/festival effects.
+Main-estimator scores measure **conditional estimation given recorded weather**. They are not a backtest using archived provider weather forecasts. Reports include MAE, RMSE, R², baseline scores, weather ablation for daily volume and a time/corridor-feature ablation for travel pace. These scores describe the fitted models before the growth adjustment. The hourly allocation has no measured count accuracy. Model input contrasts are associations, not causal weather/festival effects.
 
 Main-estimator anomaly references use earlier real observations. The volume reference uses the preceding 28 calendar days when enough values exist, otherwise a disclosed historical reference of up to 90 days ending at the latest available count. Travel-pace references match the reference route, hour and weekday/weekend class. The robust score is `(value - median) / (1.4826 * MAD)`, equivalent to approximately `0.6745 * (value - median) / MAD`; `|Z| > 3` flags a deviation. IQR and a numerical floor handle zero MAD. An insufficient earlier reference produces no score.
 

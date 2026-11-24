@@ -9,6 +9,9 @@ from .explanations import prediction_summary
 from .settings import EVENTS, TIMEZONE
 
 
+ANNUAL_VOLUME_GROWTH = 0.10
+
+
 def local_time(value):
     result = pd.Timestamp(value)
     if pd.isna(result):
@@ -41,6 +44,23 @@ def _daily_prediction(bundle, row):
     priors = bundle['weather_priors'][int(row.month.iloc[0])]
     variants = pd.concat([row.assign(weather_context=name) for name in priors], ignore_index=True)
     return float(np.dot(model.predict(variants), list(priors.values())))
+
+
+def _growth_adjustment(day, archive_end, base_daily_estimate):
+    """Compound the assumed growth rate after the available count archive ends."""
+    if pd.isna(archive_end) or day <= archive_end:
+        return None
+    years = day.year - archive_end.year
+    anniversary = archive_end + pd.DateOffset(years=years)
+    if anniversary > day:
+        years -= 1
+        anniversary = archive_end + pd.DateOffset(years=years)
+    next_anniversary = archive_end + pd.DateOffset(years=years + 1)
+    elapsed_years = years + (day - anniversary) / (next_anniversary - anniversary)
+    return {'annual_rate': ANNUAL_VOLUME_GROWTH, 'archive_end': str(archive_end.date()),
+            'elapsed_years': float(elapsed_years),
+            'multiplier': float((1 + ANNUAL_VOLUME_GROWTH) ** elapsed_years),
+            'base_daily_estimate': base_daily_estimate}
 
 
 def _profile(bundle, journey, road, day, weather_frame, now, *, neutral=False):
@@ -141,7 +161,14 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
             query[name] = np.nan
     features = condition_frame(pd.concat([prior, query], ignore_index=True), use_history=True, as_of=current)
     row = features.loc[features.timestamp.eq(day)].copy()
-    daily_estimate = observed_daily if observed_daily is not None else _daily_prediction(bundle, row)
+    model_context_value = _daily_prediction(bundle, row)
+    growth = None
+    if observed_daily is None:
+        completed = volume.timestamp + pd.Timedelta('1D') <= current
+        archive_end = volume.loc[completed, 'timestamp'].max()
+        growth = _growth_adjustment(day, archive_end, model_context_value)
+    growth_factor = growth['multiplier'] if growth else 1.0
+    daily_estimate = observed_daily if observed_daily is not None else model_context_value * growth_factor
     profile, routes = _profile(bundle, journey, road, day, weather_frame, current)
     neutral, _ = _profile(bundle, journey, road, day, None, current, neutral=True)
     profile['vehicles'] = daily_estimate * profile.share
@@ -175,8 +202,10 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
     normal_hourly = None
     observed_daily_z = None
     if reference is not None:
-        normal_hourly = reference['median'] * neutral_share
-        volume_z = (hourly_estimate - normal_hourly) / (reference['scale'] * neutral_share)
+        # Scale the comparison as well so the assumed growth alone cannot trigger an anomaly.
+        normal_hourly = reference['median'] * growth_factor * neutral_share
+        hourly_scale = reference['scale'] * growth_factor * neutral_share
+        volume_z = (hourly_estimate - normal_hourly) / hourly_scale
         if observed_daily is not None:
             observed_daily_z = (observed_daily - reference['median']) / reference['scale']
     route_prior = journey.loc[journey.entity.isin(routes.entity)
@@ -195,7 +224,6 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
     flagged = largest is not None and abs(largest) > 3
     state = ('Predicted unusual traffic' if future else 'Estimated unusual traffic') if flagged else ('Within usual range' if scores else 'Insufficient earlier reference')
     no_weather_row = row.assign(weather_context='Unknown')
-    model_context_value = _daily_prediction(bundle, row)
     weather_response = model_context_value - _daily_prediction(bundle, no_weather_row)
     no_calendar = row.copy()
     for name in ('is_holiday', 'is_festival', 'festival_window', 'is_custom_event'):
@@ -207,7 +235,7 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
     selected_context = add_context(pd.DataFrame({'timestamp': [target], 'entity': [road], 'label': [road]}), as_of=current).iloc[0]
     normal_shares = neutral.set_index('timestamp').share
     profile_rows = [{'timestamp': str(r.timestamp), 'estimated_vehicles': float(r.vehicles),
-                     'usual_vehicles': float(reference['median'] * normal_shares.loc[r.timestamp]) if reference else None,
+                     'usual_vehicles': float(reference['median'] * growth_factor * normal_shares.loc[r.timestamp]) if reference else None,
                      'share': float(r.share), 'travel_pace': float(r.pace), 'travel_source': r.source}
                     for r in profile.itertuples()]
     daily_quality = bundle['report']['models']['daily_volume']
@@ -219,6 +247,7 @@ def estimate_traffic(bundle, volume, journey, road, timestamp, *, weather_frame=
         'kind': 'Forecast estimate' if future else 'Historical lookup + hourly estimate' if observed_daily is not None else 'Historical estimate',
         'hourly_estimate': hourly_estimate, 'hourly_unit': 'vehicles in the selected hour',
         'daily_estimate': float(daily_estimate), 'observed_daily': observed_daily,
+        'growth_adjustment': growth,
         'normal_hourly': float(normal_hourly) if normal_hourly is not None else None,
         'traffic_level': classification['level'], 'traffic_classification': classification,
         'weather': weather, 'daily_weather_context': daily_weather,

@@ -56,6 +56,8 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     assert any('Precipitation: 2.0 mm' in item.value for item in app.caption)
     summary = app.session_state['traffic_result']['summary']
     assert 'forecast rain' in summary and 'Rajyotsava' in summary
+    assert 'assuming 10% annual growth' in summary
+    assert any('10% per year' in item.value and 'Applied uplift' in item.value for item in app.caption)
     assert any(item.value == summary for item in app.markdown)
     assert any(item.label == 'Estimated vehicles in selected hour' for item in app.metric)
     classification = app.session_state['traffic_result']['traffic_classification']
@@ -71,8 +73,10 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     record_id = app.session_state['traffic_record_id']
     saved = storage.get_estimate(record_id, database)
     assert saved['summary'] == summary
-    # Records saved before summaries existed must still open with an explanation.
-    legacy = {key: value for key, value in saved.items() if key not in ('summary', 'traffic_classification')}
+    assert saved['growth_adjustment']['annual_rate'] == .10
+    assert saved['growth_adjustment'] == app.session_state['traffic_result']['growth_adjustment']
+    # Older estimates must still open without fields introduced in later versions.
+    legacy = {key: value for key, value in saved.items() if key not in ('summary', 'traffic_classification', 'growth_adjustment')}
     monkeypatch.setattr(storage, 'get_estimate', lambda value: legacy)
     element(app.button, 'Open result').click().run()
     assert not app.exception

@@ -83,6 +83,7 @@ def show_result(result, record_id=None):
     st.markdown(f'<div class="hero"><h2>{escape(result["road"])}</h2><p>{target:%A, %d %B %Y · %H:%M} IST · {escape(result["kind"])}</p></div>', unsafe_allow_html=True)
     weather, calendar = result['weather'], result['calendar']
     classification = result.get('traffic_classification')
+    growth = result.get('growth_adjustment')
     weather_metadata = result['weather_metadata']
     weather_label = sky_condition_label(weather) or WEATHER_LABELS.get(weather['condition'], weather['condition'])
     a, b, c, d = st.columns(4)
@@ -98,6 +99,13 @@ def show_result(result, record_id=None):
         location = weather_metadata.get('location', 'Bengaluru city centre')
         d.caption(f'{provider} · {location} · {start:%H:%M} IST')
     st.caption(f'Hourly estimate covers {start:%d %b, %H:%M}–{end:%H:%M} IST. Vehicle count means vehicles passing during this hour.')
+    if growth:
+        archive_end = pd.Timestamp(growth['archive_end'])
+        st.caption(
+            f'**Growth assumption:** {growth["annual_rate"]:.0%} per year, compounded from {archive_end:%d %b %Y}. '
+            f'Applied uplift: **{growth["multiplier"] - 1:+.2%}** '
+            f'({growth["base_daily_estimate"]:,.0f} to {result["daily_estimate"]:,.0f} estimated vehicles/day).'
+        )
     if classification and classification['lower_threshold'] is not None:
         lower, upper = classification['lower_threshold'], classification['upper_threshold']
         st.markdown(f'**Low:** below **{lower:,}** · **Moderate:** **{lower:,}–{upper:,}** inclusive · **High:** above **{upper:,}** estimated vehicles/hour.')
@@ -154,8 +162,9 @@ def show_result(result, record_id=None):
     colors = [highlight if h == start.hour else TEAL for h in profile.hour]
     figure = go.Figure(go.Bar(x=profile.timestamp, y=profile.estimated_vehicles, name='Estimated vehicles', marker_color=colors,
                              customdata=profile[['travel_pace']], hovertemplate='%{x|%H:%M}<br>%{y:,.0f} estimated vehicles<br>Reference pace: %{customdata[0]:.2f} min/km<extra></extra>'))
+    reference_label = 'Growth-adjusted reference' if growth else 'Historical reference'
     if 'usual_vehicles' in profile and profile.usual_vehicles.notna().any():
-        figure.add_trace(go.Scatter(x=profile.timestamp, y=profile.usual_vehicles, name='Historical reference',
+        figure.add_trace(go.Scatter(x=profile.timestamp, y=profile.usual_vehicles, name=reference_label,
                                     mode='lines', line=dict(color='#476C9B', width=2, dash='dot')))
     if classification and classification['lower_threshold'] is not None:
         figure.add_hline(y=classification['lower_threshold'], line_color=TEAL, line_dash='dash',
@@ -165,7 +174,9 @@ def show_result(result, record_id=None):
     figure.update_xaxes(dtick=7200000, tickformat='%H:%M', title='Hour beginning · IST')
     figure.update_yaxes(title='Estimated vehicles per hour')
     chart(figure)
-    st.caption('The highlighted bar is the selected hour. The 24 hourly estimates sum to the daily volume above. The dotted line shows the historical reference when enough earlier records exist; horizontal guides mark the volume-classification cutoffs.')
+    st.caption('The highlighted bar is the selected hour. The 24 hourly estimates sum to the daily volume above. '
+               f'The dotted line shows the {reference_label.lower()} when enough earlier records exist. '
+               'Horizontal guides mark the volume-classification cutoffs.')
     st.subheader('Patterns learned from travel data')
     period_means = [profile.loc[profile.hour.between(lo, hi), 'estimated_vehicles'].mean()
                     for lo, hi in [(0, 5), (6, 9), (12, 14), (17, 19)]]
@@ -190,6 +201,8 @@ def show_result(result, record_id=None):
         if anomaly['travel_pace_z'] is not None:
             st.write(f'**Travel-pace Z-score:** {anomaly["travel_pace_z"]:+.2f}')
         st.caption(anomaly['note'])
+        if growth:
+            st.caption('The volume Z-score uses the same growth assumption for the reference and the estimate.')
     with st.expander('How the estimate was made'):
         st.write('A trained vehicle-volume model uses the road, weekday, season, past counts, weather category and holiday/festival features. A second trained model estimates travel pace using hour, morning/lunch/evening periods, route, airport-corridor identity, weather category, temperature, humidity and calendar context.')
         st.write('Hourly volume is an approximation: the daily volume is allocated across the day in proportion to the predicted travel pace. Travel delay and vehicle flow can differ, so this allocation remains a modelling assumption.')

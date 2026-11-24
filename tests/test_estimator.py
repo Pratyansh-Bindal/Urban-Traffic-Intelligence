@@ -12,6 +12,7 @@ from traffic_intelligence.features import BASIC_FEATURES, HISTORY_FEATURES
 from traffic_intelligence.models import build_model
 from traffic_intelligence.settings import EVENTS
 from traffic_intelligence.storage import compare_with_observations, get_estimate, list_estimates, save_estimate
+import traffic_intelligence.estimator as estimator_module
 import traffic_intelligence.weather as weather_module
 
 
@@ -104,6 +105,7 @@ def test_past_lookup_retains_recorded_daily_count_and_labels_hourly_estimate(est
     result = estimate_traffic(bundle, volume, journey, 'Ballari Road', '2023-04-05 12:30', now='2023-04-11')
     actual = volume.loc[volume.entity.eq('Ballari Road') & volume.timestamp.eq('2023-04-05'), 'y'].iloc[0]
     assert result['observed_daily'] == actual == result['daily_estimate']
+    assert result['growth_adjustment'] is None
     assert result['kind'] == 'Historical lookup + hourly estimate'
     assert result['period_start'] == '2023-04-05 12:00:00'
     assert sum(x['estimated_vehicles'] for x in result['hourly_profile']) == pytest.approx(actual)
@@ -129,11 +131,45 @@ def test_upcoming_estimate_excludes_unfinished_and_future_source_observations(es
     changed_journey.loc[changed_journey.timestamp + pd.Timedelta('1h') > pd.Timestamp('2023-04-10 10:30'), 'y'] = 99_999_999
     after = estimate_traffic(bundle, changed_volume, changed_journey, 'Ballari Road', target, now='2023-04-10 10:30')
     assert after['daily_estimate'] == before['daily_estimate']
+    assert after['growth_adjustment'] == before['growth_adjustment']
     assert after['hourly_estimate'] == before['hourly_estimate']
     assert after['observed_daily'] is None
     assert after['anomaly'] == before['anomaly']
     assert after['traffic_classification'] == before['traffic_classification']
     assert after['kind'] == 'Forecast estimate'
+
+
+@pytest.mark.parametrize(('target', 'kind', 'multiplier'), [
+    ('2023-10-10 12:30', 'Historical estimate', np.sqrt(1.10)),
+    ('2024-04-10 12:30', 'Historical estimate', 1.10),
+    ('2025-04-10 12:30', 'Forecast estimate', 1.21),
+])
+def test_growth_after_count_archive_compounds_before_hourly_allocation(estimator_data, target, kind, multiplier):
+    bundle, volume, journey = estimator_data
+    result = estimate_traffic(bundle, volume, journey, 'Ballari Road', target, now='2025-01-01')
+    growth = result['growth_adjustment']
+    assert result['kind'] == kind
+    assert growth['archive_end'] == '2023-04-10'
+    assert growth['multiplier'] == pytest.approx(multiplier)
+    assert result['daily_estimate'] == pytest.approx(growth['base_daily_estimate'] * multiplier)
+    assert sum(hour['estimated_vehicles'] for hour in result['hourly_profile']) == pytest.approx(result['daily_estimate'])
+    selected = result['hourly_profile'][12]
+    assert result['hourly_estimate'] == pytest.approx(selected['share'] * result['daily_estimate'])
+    assert result['normal_hourly'] == pytest.approx(selected['usual_vehicles'])
+    assert 'assuming 10% annual growth' in result['summary']
+
+
+def test_growth_adjustment_uses_historical_cutoffs_and_does_not_create_anomalies(estimator_data, monkeypatch):
+    bundle, volume, journey = estimator_data
+    args = (bundle, volume, journey, 'Ballari Road', '2025-04-10 12:30')
+    with_growth = estimate_traffic(*args, now='2025-01-01')
+    monkeypatch.setattr(estimator_module, 'ANNUAL_VOLUME_GROWTH', 0.0)
+    without_growth = estimate_traffic(*args, now='2025-01-01')
+    for key in ('lower_threshold', 'upper_threshold'):
+        assert with_growth['traffic_classification'][key] == without_growth['traffic_classification'][key]
+    assert with_growth['normal_hourly'] == pytest.approx(without_growth['normal_hourly'] * 1.21)
+    assert with_growth['anomaly']['volume_z'] == pytest.approx(without_growth['anomaly']['volume_z'])
+    assert with_growth['anomaly']['flagged'] == without_growth['anomaly']['flagged']
 
 
 def test_missing_historical_record_is_estimated_without_becoming_an_observation(estimator_data):
@@ -143,6 +179,7 @@ def test_missing_historical_record_is_estimated_without_becoming_an_observation(
     assert result['kind'] == 'Historical estimate'
     assert result['observed_daily'] is None
     assert result['daily_estimate'] > 0
+    assert result['growth_adjustment'] is None
 
 
 def test_future_event_is_used_only_after_its_announcement(estimator_data, monkeypatch):

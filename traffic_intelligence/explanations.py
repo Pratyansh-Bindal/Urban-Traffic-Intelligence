@@ -14,6 +14,8 @@ def prediction_summary(result):
         headline = f'The daily count is recorded; about {count} vehicles are estimated for {period}.'
     else:
         headline = f'About {count} vehicles are estimated for {period}.'
+    if growth := result.get('growth_adjustment'):
+        headline = headline.removesuffix('.') + f', assuming {growth["annual_rate"]:.0%} annual growth.'
     classification = result.get('traffic_classification', {})
     if classification.get('level') in ('Low', 'Moderate', 'High'):
         headline = f'{classification["level"]} hourly traffic: ' + headline[0].lower() + headline[1:]
