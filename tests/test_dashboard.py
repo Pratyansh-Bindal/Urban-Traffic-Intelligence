@@ -50,7 +50,8 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     assert 'Rajyotsava' in app.session_state['traffic_result']['calendar']['holiday_name']
     assert app.session_state['traffic_result']['weather']['condition'] == 'Rain'
     assert element(app.metric, 'Weather condition').value == 'Rainy'
-    assert any('Weather used for daily volume:' in item.value and 'Rainy' in item.value for item in app.markdown)
+    assert any('Day’s weather:' in item.value and 'Rainy' in item.value for item in app.markdown)
+    assert any('Festival day: -5%' in item.value and 'Rain: +5%' in item.value for item in app.caption)
     assert any('most common for the day' in item.value for item in app.markdown)
     assert any('dry/rainy conditions, temperature and humidity' in item.value for item in app.caption)
     assert any('Precipitation: 2.0 mm' in item.value for item in app.caption)
@@ -75,8 +76,10 @@ def test_road_time_request_automatically_fetches_context_and_saves_once(tmp_path
     assert saved['summary'] == summary
     assert saved['growth_adjustment']['annual_rate'] == .10
     assert saved['growth_adjustment'] == app.session_state['traffic_result']['growth_adjustment']
+    assert saved['volume_assumptions'] == app.session_state['traffic_result']['volume_assumptions']
     # Older estimates must still open without fields introduced in later versions.
-    legacy = {key: value for key, value in saved.items() if key not in ('summary', 'traffic_classification', 'growth_adjustment')}
+    legacy = {key: value for key, value in saved.items()
+              if key not in ('summary', 'traffic_classification', 'growth_adjustment', 'volume_assumptions')}
     monkeypatch.setattr(storage, 'get_estimate', lambda value: legacy)
     element(app.button, 'Open result').click().run()
     assert not app.exception

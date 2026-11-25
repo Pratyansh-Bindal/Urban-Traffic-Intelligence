@@ -106,6 +106,7 @@ def test_past_lookup_retains_recorded_daily_count_and_labels_hourly_estimate(est
     actual = volume.loc[volume.entity.eq('Ballari Road') & volume.timestamp.eq('2023-04-05'), 'y'].iloc[0]
     assert result['observed_daily'] == actual == result['daily_estimate']
     assert result['growth_adjustment'] is None
+    assert result['volume_assumptions'] is None
     assert result['kind'] == 'Historical lookup + hourly estimate'
     assert result['period_start'] == '2023-04-05 12:00:00'
     assert sum(x['estimated_vehicles'] for x in result['hourly_profile']) == pytest.approx(actual)
@@ -195,6 +196,60 @@ def test_future_event_is_used_only_after_its_announcement(estimator_data, monkey
     assert 'local calendar event' not in before['summary']
     assert after['calendar']['is_custom_event']
     assert 'local calendar event' in after['summary']
+
+
+def test_rain_lifts_only_rainy_hours_and_the_daily_total(estimator_data):
+    bundle, volume, journey = estimator_data
+    day = pd.Timestamp('2025-04-10')
+    args = (bundle, volume, journey, 'Ballari Road', day + pd.Timedelta(hours=17))
+    dry = pd.DataFrame({'timestamp': pd.date_range(day, periods=24, freq='h'),
+                        'condition': 'Clear', 'temperature': 25., 'humidity': 75.})
+    rain = dry.assign(condition=np.where(dry.timestamp.dt.hour.eq(17), 'Rain', 'Clear'))
+    regular = estimate_traffic(*args, weather_frame=dry, now='2025-01-01')
+    rainy = estimate_traffic(*args, weather_frame=rain, now='2025-01-01')
+    assert rainy['volume_assumptions']['rainy_hours'] == [17]
+    assert rainy['hourly_estimate'] == pytest.approx(regular['hourly_estimate'] * 1.05)
+    assert rainy['daily_estimate'] == pytest.approx(regular['daily_estimate'] + .05 * regular['hourly_estimate'])
+    assert rainy['anomaly']['volume_z'] == pytest.approx(regular['anomaly']['volume_z'])
+    for hour, (prior, after) in enumerate(zip(regular['hourly_profile'], rainy['hourly_profile'])):
+        expected = prior['estimated_vehicles'] * (1.05 if hour == 17 else 1)
+        assert after['estimated_vehicles'] == pytest.approx(expected)
+    assert sum(point['estimated_vehicles'] for point in rainy['hourly_profile']) == pytest.approx(rainy['daily_estimate'])
+
+
+@pytest.mark.parametrize(('days_to', 'is_festival', 'days_since', 'multiplier'), [
+    (3, False, 10, 1.05),
+    (0, True, 0, .95),
+    (30, False, 2, 1.0),
+])
+def test_festival_timing_adjusts_volume_on_the_same_date(
+    estimator_data, monkeypatch, days_to, is_festival, days_since, multiplier
+):
+    bundle, volume, journey = estimator_data
+    day = pd.Timestamp('2025-04-10')
+    args = (bundle, volume, journey, 'Ballari Road', day + pd.Timedelta(hours=17))
+    original = estimator_module.condition_frame
+
+    def with_calendar(distance_to, festival, distance_since):
+        def features(frame, **kwargs):
+            result = original(frame, **kwargs)
+            selected = result.timestamp.dt.normalize().eq(day)
+            result.loc[selected, 'days_to_festival'] = distance_to
+            result.loc[selected, 'days_since_festival'] = distance_since
+            result.loc[selected, 'is_festival'] = int(festival)
+            result.loc[selected, 'is_holiday'] = int(festival)
+            result.loc[selected, 'festival_name'] = 'Test festival' if festival else 'None'
+            result.loc[selected, 'festival_window'] = int(min(distance_to, distance_since) <= 3)
+            return result
+        return features
+
+    monkeypatch.setattr(estimator_module, 'condition_frame', with_calendar(30, False, 10))
+    ordinary = estimate_traffic(*args, now='2025-01-01')
+    monkeypatch.setattr(estimator_module, 'condition_frame', with_calendar(days_to, is_festival, days_since))
+    festival = estimate_traffic(*args, now='2025-01-01')
+    assert festival['volume_assumptions']['festival_rate'] == pytest.approx(multiplier - 1)
+    assert festival['daily_estimate'] == pytest.approx(multiplier * ordinary['daily_estimate'])
+    assert festival['hourly_estimate'] == pytest.approx(multiplier * ordinary['hourly_estimate'])
 
 
 def test_provider_clear_and_overcast_use_the_travel_models_dry_category(estimator_data):

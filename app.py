@@ -84,6 +84,7 @@ def show_result(result, record_id=None):
     weather, calendar = result['weather'], result['calendar']
     classification = result.get('traffic_classification')
     growth = result.get('growth_adjustment')
+    assumptions = result.get('volume_assumptions')
     weather_metadata = result['weather_metadata']
     weather_label = sky_condition_label(weather) or WEATHER_LABELS.get(weather['condition'], weather['condition'])
     a, b, c, d = st.columns(4)
@@ -106,6 +107,23 @@ def show_result(result, record_id=None):
             f'Applied uplift: **{growth["multiplier"] - 1:+.2%}** '
             f'({growth["base_daily_estimate"]:,.0f} to {result["daily_estimate"]:,.0f} estimated vehicles/day).'
         )
+    adjustment_notes = []
+    if assumptions:
+        phase = assumptions['festival_phase']
+        if phase == 'before_festival':
+            days = assumptions['days_to_festival']
+            day_unit = 'day' if days == 1 else 'days'
+            adjustment_notes.append(f'Festival in {days} {day_unit}: {assumptions["festival_rate"]:+.0%}')
+        elif phase == 'festival_day':
+            adjustment_notes.append(f'Festival day: {assumptions["festival_rate"]:+.0%}')
+        if assumptions['rainy_hours']:
+            rain_period = 'in this hour' if assumptions['selected_hour_rainy'] else 'in other rainy hours'
+            adjustment_notes.append(
+                f'Rain: {assumptions["rainy_hour_rate"]:+.0%} {rain_period} '
+                f'({assumptions["daily_rain_rate"]:+.2%} daily effect)'
+            )
+    if adjustment_notes:
+        st.caption('**Volume assumptions:** ' + ' · '.join(adjustment_notes))
     if classification and classification['lower_threshold'] is not None:
         lower, upper = classification['lower_threshold'], classification['upper_threshold']
         st.markdown(f'**Low:** below **{lower:,}** · **Moderate:** **{lower:,}–{upper:,}** inclusive · **High:** above **{upper:,}** estimated vehicles/hour.')
@@ -137,7 +155,10 @@ def show_result(result, record_id=None):
         else:
             daily_weather = result.get('daily_weather_context', 'Unknown')
             daily_label = (WEATHER_LABELS.get(daily_weather, daily_weather) + ' (most common for the day)') if daily_weather != 'Unknown' else 'Seasonal weather patterns'
-            st.write(f'**Weather used for daily volume:** {daily_label}. Rain, clear/sunny skies, clouds, fog and wind are weather-category inputs.')
+            if assumptions and assumptions['rainy_hours']:
+                st.write(f'**Day’s weather:** {daily_label}. Rain adds a separate uplift in the rainy hours.')
+            else:
+                st.write(f'**Weather used for daily volume:** {daily_label}.')
         st.caption('Hourly travel patterns use dry/rainy conditions, temperature and humidity. Clear/sunny and cloudy skies share the dry category in the travel data.')
         st.caption(weather_metadata.get('kind', 'unavailable').replace('_', ' ').capitalize())
     with right:
@@ -162,7 +183,7 @@ def show_result(result, record_id=None):
     colors = [highlight if h == start.hour else TEAL for h in profile.hour]
     figure = go.Figure(go.Bar(x=profile.timestamp, y=profile.estimated_vehicles, name='Estimated vehicles', marker_color=colors,
                              customdata=profile[['travel_pace']], hovertemplate='%{x|%H:%M}<br>%{y:,.0f} estimated vehicles<br>Reference pace: %{customdata[0]:.2f} min/km<extra></extra>'))
-    reference_label = 'Growth-adjusted reference' if growth else 'Historical reference'
+    reference_label = 'Adjusted volume reference' if growth or adjustment_notes else 'Historical reference'
     if 'usual_vehicles' in profile and profile.usual_vehicles.notna().any():
         figure.add_trace(go.Scatter(x=profile.timestamp, y=profile.usual_vehicles, name=reference_label,
                                     mode='lines', line=dict(color='#476C9B', width=2, dash='dot')))
@@ -201,16 +222,23 @@ def show_result(result, record_id=None):
         if anomaly['travel_pace_z'] is not None:
             st.write(f'**Travel-pace Z-score:** {anomaly["travel_pace_z"]:+.2f}')
         st.caption(anomaly['note'])
-        if growth:
-            st.caption('The volume Z-score uses the same growth assumption for the reference and the estimate.')
+        if growth or adjustment_notes:
+            st.caption('The volume Z-score applies the same assumptions to the reference and the estimate.')
     with st.expander('How the estimate was made'):
-        st.write('A trained vehicle-volume model uses the road, weekday, season, past counts, weather category and holiday/festival features. A second trained model estimates travel pace using hour, morning/lunch/evening periods, route, airport-corridor identity, weather category, temperature, humidity and calendar context.')
-        st.write('Hourly volume is an approximation: the daily volume is allocated across the day in proportion to the predicted travel pace. Travel delay and vehicle flow can differ, so this allocation remains a modelling assumption.')
+        st.write('A trained vehicle-volume model uses the road, weekday, season, past counts, weather category and calendar. A second model estimates travel pace using hour, route, weather and calendar context.')
+        if assumptions:
+            base_weather = assumptions['baseline_weather']
+            baseline_label = WEATHER_LABELS.get(base_weather, base_weather)
+            st.write(f'**Baseline daily estimate:** {assumptions["baseline_daily_estimate"]:,.0f} vehicles '
+                     f'with {baseline_label.lower()} weather inputs, before the volume assumptions and yearly growth.')
+            st.caption('The baseline treats rainy hours as clear and omits festival signals. The volume assumptions then adjust that baseline.')
+        st.write(f'**Hourly allocation:** {result["allocation_note"]} Travel delay and vehicle flow can differ.')
         st.write(f'**Models:** {result["model"]["daily_volume"]} for daily volume; {result["model"]["travel_pace"]} for travel pace.')
         st.write(f'**Held-out daily MAE:** {result["model"]["daily_test_mae"]:,.0f} vehicles/day. **Travel-pace MAE:** {result["model"]["travel_pace_test_mae"]:.3f} minutes/km.')
         st.caption(result['model']['evaluation_protocol'] + ' Hourly vehicle-count accuracy has not been measured against hourly counts.')
         responses = result['model_responses']
-        st.write(f'Daily model input contrasts: weather {responses["weather_daily_vehicles"]:+,.0f} vehicles; calendar {responses["calendar_daily_vehicles"]:+,.0f} vehicles. These describe model responses, not causal effects.')
+        st.write(f'Raw model input contrasts before the volume assumptions: weather {responses["weather_daily_vehicles"]:+,.0f} vehicles, '
+                 f'calendar {responses["calendar_daily_vehicles"]:+,.0f} vehicles.')
         st.caption(f'Travel source: {route_names}. Latest count input: {result["latest_volume_input"] or "none"}. Model version: {result["model"]["version"]}.')
     for warning in result['warnings']:
         st.caption(warning)
